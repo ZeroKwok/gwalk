@@ -102,7 +102,7 @@ class RepoWalk:
     def __init__(self, directory:str, recursive:bool=False):
         self.directory = directory
         self.recursive = recursive
-        
+
     def __iter__(self):
         if self.recursive:
             for root, dirs, files in os.walk(self.directory):
@@ -125,7 +125,7 @@ class RepoWalk:
         if '.git' in files:
             return 2
         return 0
-    
+
     def isRepo(directory) -> int:
         for _, dirs, files in os.walk(directory):
             return RepoWalk.repoType(dirs, files) != 0
@@ -138,14 +138,14 @@ class RepoStatus:
     def __init__(self, directory:str):
         self.repo = git.Repo(directory)
         self.status = []
-     
+
     class AssetState:
         def __init__(self, x = '', y = '', path = ''):
             self.X = x
             self.Y = y
             self.PATH = path
             self.ORIG_PATH = None
-            
+
         def match(self, condition:str='dirty') -> bool:
             '''
             condition: 
@@ -214,7 +214,7 @@ class RepoStatus:
         '''
         加载仓库状态
         '''
-        
+
         '''
         相当于执行下面的命令: 
         git status --porcelain=1 --untracked-files=normal
@@ -294,7 +294,7 @@ class RepoStatus:
 
         if level == 'none':
             cprint(dir)
-        
+
         elif level == 'brief':
             modified = []
             untracked = []
@@ -325,7 +325,7 @@ class PathFilter:
     def __init__(self, filename:str=None) -> None:
         self.patterns = None
         self.load(filename)
-        
+
     def __bool__(self):
         return self.patterns is not None
 
@@ -346,7 +346,7 @@ class PathFilter:
             if item.match(path):
                 return True
         return False
-    
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', action='store_true')
@@ -359,55 +359,14 @@ def main():
     parser.add_argument('-r', '--recursive', action='store_true', default=False)
 
     parser.add_argument('-f', '--filter', action='store', choices=['all', 'clean', 'dirty', 'modified', 'untracked'], default='dirty')
-
     parser.add_argument('--blacklist', action='store', default='')
     parser.add_argument('--whitelist', action='store', default='')
     parser.add_argument('--force', action='store_true')
 
     parser.add_argument('-a', '--action', action='store', choices=['bash', 'gui', 'run'], default=None)
-
     parser.add_argument('params', nargs=argparse.REMAINDER)
 
-    # 单元测试
-    # args = parser.parse_args([])
-    # args = parser.parse_args('--version'.split())
-    # args = parser.parse_args('--verbose'.split())
-    # args = parser.parse_args('--level none'.split())
-    # args = parser.parse_args('--level normal'.split())
-    # args = parser.parse_args('--level brief'.split())
-    # args = parser.parse_args('--level verbose'.split())
-    # args = parser.parse_args('--verbose --level brief'.split())
-    # args = parser.parse_args('--verbose --level none'.split())
-    # args = parser.parse_args('-v --level none'.split())
-    # args = parser.parse_args('-d ..'.split())
-    # args = parser.parse_args('--directory ..'.split())
-    # args = parser.parse_args('-rd ..'.split())
-    # args = parser.parse_args('--directory .. --recursive'.split())
-    # args = parser.parse_args('-f all'.split())
-    # args = parser.parse_args('-f modified'.split())
-    # args = parser.parse_args('-f untracked'.split())
-    # args = parser.parse_args('--filter clean'.split())
-    # args = parser.parse_args('--blacklist gwalk.blacklist'.split())
-    # args = parser.parse_args('--blacklist "gwalk.blacklist"'.split())
-    # args = parser.parse_args('--blacklist "./gwalk.blacklist"'.split())
-    # args = parser.parse_args('--blacklist "../gwalk.blacklist"'.split())
-    # args = parser.parse_args('--force'.split())
-    # args = parser.parse_args('-a gui'.split())
-    # args = parser.parse_args('-a bash'.split())
-    # args = parser.parse_args('-a run git pull origin dev'.split())
-    # args = parser.parse_args('-a run "git pull origin dev"'.split())
-    # args = parser.parse_args('--action run git pull origin dev'.split())
-    # args = parser.parse_args('-f all -a bash'.split())
-    # args = parser.parse_args('-rf all -a bash'.split())
-    # args = parser.parse_args('-rf all -a bash'.split())
-    # args = parser.parse_args('-f clean -a gui'.split())
-    # args = parser.parse_args('-d .. -f all -a run push origin dev'.split())
-    # args = parser.parse_args('-f all -a run git push origin dev'.split())
-    # args = parser.parse_args('-rf all -d ./projects --blacklist ./gwalk.blacklist --force -a run git pull origin {ActiveBranch}'.split())
-    # args = parser.parse_args('-rf all --directory ./projects --blacklist ./gwalk.blacklist --force --action run git pull origin {ActiveBranch}'.split())
-    
     args = parser.parse_args()
-
     if args.debug:
         if args.debug == 'wait':
             input('Wait for debugging and press Enter to continue...')
