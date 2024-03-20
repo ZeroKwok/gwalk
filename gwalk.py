@@ -93,15 +93,16 @@ try:
     import git
     from   termcolor import cprint
 except ModuleNotFoundError as e:
-    traceback.print_exc()
-    print(f'{projectName} depends on GitPython and termcolor, use the following command to install them:')
-    print('  python -m pip install GitPython termcolor')
+    print(f'{projectName} depends on "GitPython" and "termcolor", use the following command to install them:')
+    print()
+    print('"python -m pip install GitPython termcolor"')
     exit(1)
 
 class RepoWalk:
-    def __init__(self, directory:str, recursive:bool=False):
+    def __init__(self, directory:str, recursive:bool=False, debug:bool=False):
         self.directory = directory
         self.recursive = recursive
+        self.debug = debug
 
     def __iter__(self):
         if self.recursive:
@@ -110,6 +111,8 @@ class RepoWalk:
                     yield root
         else:
             for root, dirs, files in os.walk(self.directory):
+                if RepoWalk.isRepo(root):
+                    yield root
                 for d in dirs:
                     if d in ['.git', '.vs', '.vscode']:
                         continue
@@ -306,9 +309,9 @@ class RepoStatus:
 
             cprint(dir, 'green')
             if not modified and not untracked:
-                cprint(f'  Clean', 'white')
+                cprint(f'>  Clean', 'white')
             else:
-                cprint(f'  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
+                cprint(f'>  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
 
         else:
             lastcwd = os.getcwd()
@@ -317,13 +320,14 @@ class RepoStatus:
                 if level == 'normal':
                     os.system('git status -s --untracked-files=normal --ignore-submodules=all')
                 else:
-                    os.system('git status -b --show-stash --untracked-files=all --ignore --ignore-submodules=all')
+                    os.system('git status -b --show-stash --untracked-files=all --ignore-submodules=all --ignored')
             finally:
                 os.chdir(lastcwd)
 
 class PathFilter:
     def __init__(self, filename:str=None) -> None:
         self.patterns = None
+        self.filename = filename
         self.load(filename)
 
     def __bool__(self):
@@ -338,7 +342,7 @@ class PathFilter:
                 line = line.lstrip(' ').rstrip('\n')
                 if not line or line.startswith('#'):
                     continue
-                self.patterns.append(line.rstrip('\n'))
+                self.patterns.append(re.compile(line.rstrip('\n')))
 
     def match(self, path) -> bool:
         path = path.replace('\\', '/')
@@ -350,7 +354,7 @@ class PathFilter:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', action='store_true')
-    parser.add_argument('--debug',  action='store', nargs='?', default=None)
+    parser.add_argument('--debug',  action='store', nargs='?', default='disable')
 
     parser.add_argument('-v', '--verbose', action='store_true', default=False)
     parser.add_argument('-l', '--level', action='store', choices=['none', 'brief', 'normal', 'verbose'], default='brief')
@@ -367,10 +371,14 @@ def main():
     parser.add_argument('params', nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
-    if args.debug:
+    if args.debug == 'disable':
+        args.debug = False
+    else:
         if args.debug == 'wait':
             input('Wait for debugging and press Enter to continue...')
-        print(args)
+        else:
+            args.debug = True
+        print(f'> {projectName} args={args}')
 
     if args.version:
         print(f'{projectName} version {projectVersion} powered by {projectAuthor}')
@@ -404,11 +412,15 @@ def main():
         args.blacklist = ''
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
+    if args.debug:
+        print(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'))
+        print(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'))
 
     def doAction(status:RepoStatus):
         lastcwd = os.getcwd()
         try:
             if args.action == 'bash':
+                cprint(f'> Note that you are running in a new bash, Press "CTRL + C, CTRL + D" to exit!', 'yellow')
                 os.chdir(status.repo.working_dir)
                 os.system('bash')
 
@@ -434,18 +446,34 @@ def main():
         finally:
             os.chdir(lastcwd)
     
-    for path in RepoWalk(args.directory, args.recursive):
-        if args.blacklist and args.blacklist.match(path):
+    ignored = 0
+    matched = 0
+    for path in RepoWalk(args.directory, args.recursive, debug=args.debug):
+        def filter(list, name):
+            if list and list.match(path):
+                if args.debug:
+                    print(f'> ignored repo that in {name}: {os.path.relpath(path, args.directory)}')
+                return True
+            return False
+        if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist'):
+            ignored += 1
             continue
-        if args.whitelist and not args.whitelist.match(path):
-            continue
+         
         repo = RepoStatus(path)
-        if args.filter != 'all':
+        if not (args.filter == 'all' and args.level == 'none'):
             repo.load()
-        if repo.match(args.filter):
-            repo.display(args.directory, args.level)
-            doAction(repo)
-    cprint(f'Finished!')
+        if not repo.match(args.filter):
+            ignored += 1
+            if args.debug:
+                print(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}')
+            continue
+        
+        matched += 1
+        repo.display(args.directory, args.level)
+        doAction(repo)
+        
+    cprint('')
+    cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}')
 
 if __name__ == '__main__':
     main()
