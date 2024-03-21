@@ -329,6 +329,12 @@ class RepoHandler:
     def __init__(self):
         self.success = []
         self.failure = []
+        
+    def execute(cmd:str) -> int:
+        code = os.system(cmd)
+        if platform.system().lower() != 'windows':
+            code >>= 8
+        return code
     
     def perform(self, repo, args):
         lastcwd = os.getcwd()
@@ -355,10 +361,7 @@ class RepoHandler:
                     cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
 
                 os.chdir(repo.repo.working_dir)
-                repo.code = os.system(cmd)
-                if platform.system().lower() != 'windows':
-                    repo.code >>= 8
-                    
+                repo.code = RepoHandler.execute(cmd)
                 if repo.code == 0:
                     self.success.append(repo)
                 else:
@@ -369,9 +372,12 @@ class RepoHandler:
 
         finally:
             os.chdir(lastcwd)
-            
-    def report(self):
-        pass
+
+    def report(self, prefix:str=''):
+        if self.success or self.failure:
+            return prefix + f'Run result: success {len(self.success)}, failure {len(self.failure)}'
+        else:
+            return ''
 
 class PathFilter:
     def __init__(self, filename:str=None) -> None:
@@ -478,7 +484,7 @@ def main():
         if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist'):
             ignored += 1
             continue
-         
+
         repo = RepoStatus(path)
         if not (args.filter == 'all' and args.level == 'none'):
             repo.load()
@@ -487,13 +493,14 @@ def main():
             if args.debug:
                 print(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}')
             continue
-        
+
         matched += 1
         repo.display(args.directory, args.level)
         handler.perform(repo, args)
         
     cprint('')
-    cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}')
+    cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
+            'red' if handler.failure else 'white')
 
 if __name__ == '__main__':
     try:
