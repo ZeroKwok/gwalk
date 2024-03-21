@@ -82,6 +82,7 @@ import re
 import sys
 import shutil
 import argparse
+import platform
 import traceback
 
 projectName    = 'gwalk'
@@ -309,9 +310,9 @@ class RepoStatus:
 
             cprint(dir, 'green')
             if not modified and not untracked:
-                cprint(f'>  Clean', 'white')
+                cprint(f'  Clean', 'white')
             else:
-                cprint(f'>  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
+                cprint(f'  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
 
         else:
             lastcwd = os.getcwd()
@@ -323,6 +324,54 @@ class RepoStatus:
                     os.system('git status -b --show-stash --untracked-files=all --ignore-submodules=all --ignored')
             finally:
                 os.chdir(lastcwd)
+
+class RepoHandler:
+    def __init__(self):
+        self.success = []
+        self.failure = []
+    
+    def perform(self, repo, args):
+        lastcwd = os.getcwd()
+        try:
+            if args.action == 'bash':
+                cprint('')
+                cprint(f'> Note that you are running in a new bash...', 'yellow')
+                cprint(f'> * Press "CTRL + D" to exit the bash!', 'yellow')
+                cprint(f'> * Press "CTRL + C, CTRL + D" to abort the {projectName}!', 'yellow')
+                os.chdir(repo.repo.working_dir)
+                os.system('bash')
+
+            elif args.action == 'gui':
+                os.chdir(repo.repo.working_dir)
+                os.system('git gui')
+
+            elif args.action == 'run':
+                cmd = ' '.join(args.params)
+                if '{ab}' in cmd:
+                    cmd = cmd.replace('{ab}', repo.repo.active_branch.name)
+                if '{ActiveBranch}' in cmd:
+                    cmd = cmd.replace('{ActiveBranch}', repo.repo.active_branch.name)
+                if '{RepositoryName}' in cmd:
+                    cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
+
+                os.chdir(repo.repo.working_dir)
+                repo.code = os.system(cmd)
+                if platform.system().lower() != 'windows':
+                    repo.code >>= 8
+                    
+                if repo.code == 0:
+                    self.success.append(repo)
+                else:
+                    self.failure.append(repo)
+                    
+        except Exception as e:
+            traceback.print_exc()
+
+        finally:
+            os.chdir(lastcwd)
+            
+    def report(self):
+        pass
 
 class PathFilter:
     def __init__(self, filename:str=None) -> None:
@@ -416,38 +465,9 @@ def main():
         print(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'))
         print(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'))
 
-    def doAction(status:RepoStatus):
-        lastcwd = os.getcwd()
-        try:
-            if args.action == 'bash':
-                cprint(f'> Note that you are running in a new bash, Press "CTRL + C, CTRL + D" to exit!', 'yellow')
-                os.chdir(status.repo.working_dir)
-                os.system('bash')
-
-            elif args.action == 'gui':
-                os.chdir(status.repo.working_dir)
-                os.system('git gui')
-
-            elif args.action == 'run':
-                cmd = ' '.join(args.params)
-                if '{ab}' in cmd:
-                    cmd = cmd.replace('{ab}', status.repo.active_branch.name)
-                if '{ActiveBranch}' in cmd:
-                    cmd = cmd.replace('{ActiveBranch}', status.repo.active_branch.name)
-                if '{RepositoryName}' in cmd:
-                    cmd = cmd.replace('{RepositoryName}', os.path.basename(status.repo.working_dir))
-
-                os.chdir(status.repo.working_dir)
-                os.system(cmd)
-
-        except Exception as e:
-            traceback.print_exc()
-
-        finally:
-            os.chdir(lastcwd)
-    
     ignored = 0
     matched = 0
+    handler = RepoHandler()
     for path in RepoWalk(args.directory, args.recursive, debug=args.debug):
         def filter(list, name):
             if list and list.match(path):
@@ -470,10 +490,13 @@ def main():
         
         matched += 1
         repo.display(args.directory, args.level)
-        doAction(repo)
+        handler.perform(repo, args)
         
     cprint('')
     cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}')
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
