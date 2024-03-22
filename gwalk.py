@@ -32,12 +32,12 @@
 #            [--filter CONDITION] [--action PROC]
 # 示例
 #   1. gwalk.py
-#       列出当前目录下所有'脏'的Git仓库(不包含./gwalk.blacklist黑名单文件中匹配的项)
+#      列出当前目录下所有'脏'的Git仓库(不包含./gwalk.blacklist黑名单文件中匹配的项)
 #   2. gwalk.py -f  all -r
 #      gwalk.py -rf all
-#       递归列出当前目录下所有的Git仓库(不包含./gwalk.blacklist黑名单文件中匹配的项)
+#      递归列出当前目录下所有的Git仓库(不包含./gwalk.blacklist黑名单文件中匹配的项)
 #   3. gwalk.py -rf all -a run git pull origin
-#       在列出的每个仓库中执行命令: git pull origin
+#      在列出的每个仓库中执行命令: git pull origin
 #
 # 选项
 #   -h,--help       显示帮助信息
