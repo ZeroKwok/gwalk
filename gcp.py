@@ -50,7 +50,7 @@ if __name__ == '__main__':
 
    if args.push:
       for r in repo.repo.remotes:
-         code += execute('git push {r.name} {branch}', )
+         code += execute(f'git push {r.name} {branch}', )
       exit(code)
 
    if repo.match('clean'):
