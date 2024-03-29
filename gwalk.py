@@ -315,6 +315,7 @@ class RepoStatus:
                 cprint(f'  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
 
         else:
+            cprint(dir, 'green')
             lastcwd = os.getcwd()
             try:
                 os.chdir(self.repo.working_dir)
