@@ -298,8 +298,11 @@ class RepoStatus:
 
         if level == 'none':
             cprint(dir)
+        else:
+            cprint(dir, 'green', end=' ')
+            cprint(f'({self.repo.active_branch.name})', 'cyan')
 
-        elif level == 'brief':
+        if level == 'brief':
             modified = []
             untracked = []
             for item in self.status:
@@ -308,14 +311,12 @@ class RepoStatus:
                 elif item.X == '?' and item.Y == '?':
                     untracked.append(item)
 
-            cprint(dir, 'green')
             if not modified and not untracked:
                 cprint(f'  Clean', 'white')
             else:
                 cprint(f'  Modified: {len(modified)}, Untracked: {len(untracked)}', 'red')
 
         else:
-            cprint(dir, 'green')
             lastcwd = os.getcwd()
             try:
                 os.chdir(self.repo.working_dir)
