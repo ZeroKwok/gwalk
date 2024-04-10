@@ -7,7 +7,7 @@
 # gcp.py (git commit and push)
 #
 # 语法
-#   gcp.py [-h] [-a|--all] [--show] [--push] []"提交信息"]
+#   gcp.py [-h] [-a|--all] [--show] [--push] ["提交信息"]
 # 
 # 示例
 #   1. gcp.py "fix some bugs"
