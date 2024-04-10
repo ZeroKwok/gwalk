@@ -86,7 +86,7 @@ import platform
 import traceback
 
 projectName    = 'gwalk'
-projectHome    = 'https://open.7-0.cc/'
+projectHome    = 'https://github.com/ZeroKwok/gwalk.git'
 projectVersion = '0.1.3'
 projectAuthor  = 'zero.kwok@foxmail.com'
 
@@ -97,6 +97,8 @@ except ModuleNotFoundError as e:
     print(f'{projectName} depends on "GitPython" and "termcolor", use the following command to install them:')
     print()
     print('"python -m pip install GitPython termcolor"')
+    exit(1)
+except KeyboardInterrupt:
     exit(1)
 
 class RepoWalk:
