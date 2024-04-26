@@ -7,7 +7,7 @@
 # gcp.py (git commit and push)
 #
 # 语法
-#   gcp.py [-h] [-a|--all] [--show] [--push] ["提交信息"]
+#   gcp.py [-h] [-a|--all] [--show] [-p|--push] [-s|--src <SRC>] ["提交信息"]
 # 
 # 示例
 #   1. gcp.py "fix some bugs"
@@ -17,10 +17,11 @@
 #      仅推送当前分支到所有远端, 不做提交
 #
 # 选项
-#   -a,--all 添加未跟踪的文件以及已修改的文件
-#   --show   仅显示执行命令，而不做任何改变
-#   --push   仅执行推送动作, 将忽略 --all 以及 commit
-#   commit   提交消息
+#   --show      仅显示执行命令，而不做任何改变
+#   -a,--all    添加未跟踪的文件以及已修改的文件
+#   -s,--src    要推送的本地仓库中的 分支 或 标签
+#   -p,--push   仅执行推送动作, 将忽略 --all 以及 commit
+#   commit      提交消息
 
 import os
 import gwalk
@@ -43,21 +44,26 @@ if __name__ == '__main__':
    try:
       parser = argparse.ArgumentParser()
       parser.add_argument('-a', '--all', action='store_true')
+      parser.add_argument('-s', '--src', action='store', default=None)
+      parser.add_argument('-p', '--push', action='store_true')
       parser.add_argument('--show', action='store_true')
-      parser.add_argument('--push', action='store_true')
-      parser.add_argument('commit', nargs='?')
+      parser.add_argument('commit', nargs=argparse.REMAINDER)
       args = parser.parse_args()
+
+      args.commit = ' '.join(args.commit)
 
       if not gwalk.RepoWalk.isRepo(os.getcwd()):
          gwalk.cprint(f'This is not an valid git repository.', 'red')
          exit(1)
 
       repo = gwalk.RepoStatus(os.getcwd()).load()
-      branch = repo.repo.active_branch.name
+
+      if args.src is None:
+         args.src = repo.repo.active_branch.name
 
       if args.push:
          for r in repo.repo.remotes:
-            execute(f'git push {r.name} {branch}', args.show)
+            execute(f'git push {r.name} {args.src}', args.show)
          exit(0)
 
       if repo.match('clean'):
@@ -72,7 +78,7 @@ if __name__ == '__main__':
          else:
             execute(f'git commit', args.show)
          for r in repo.repo.remotes:
-            execute(f'git push {r.name} {branch}', args.show)
+            execute(f'git push {r.name} {args.src}', args.show)
       exit(0)
    except ResultError as e:
       exit(e.ecode)
