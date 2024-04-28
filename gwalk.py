@@ -472,19 +472,21 @@ def main():
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
     if args.debug:
-        print(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'))
-        print(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'))
+        cprint(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'), 'yellow')
+        cprint(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'), 'yellow')
 
     ignored = 0
     matched = 0
     handler = RepoHandler()
     for path in RepoWalk(args.directory, args.recursive, debug=args.debug):
         def filter(list, name):
-            if list and list.match(path):
-                if args.debug:
-                    print(f'> ignored repo that in {name}: {os.path.relpath(path, args.directory)}')
-                return True
-            return False
+            matched = bool(list and list.match(path))
+            if args.debug:
+                if args.verbose:
+                    cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
+                if matched:
+                    cprint(f'> ignored repo that in {name}: {os.path.relpath(path, args.directory)}', 'yellow')
+            return matched
         if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist'):
             ignored += 1
             continue
@@ -495,13 +497,13 @@ def main():
         if not repo.match(args.filter):
             ignored += 1
             if args.debug:
-                print(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}')
+                cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
             continue
 
         matched += 1
         repo.display(args.directory, args.level)
         handler.perform(repo, args)
-        
+
     cprint('')
     cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
             'red' if handler.failure else 'white')
