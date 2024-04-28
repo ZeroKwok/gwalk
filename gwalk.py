@@ -300,9 +300,10 @@ class RepoStatus:
 
         if level == 'none':
             cprint(dir)
-        else:
-            cprint(dir, 'green', end=' ')
-            cprint(f'({self.repo.active_branch.name})', 'cyan')
+            return
+
+        cprint(dir, 'green', end=' ')
+        cprint(f'({self.repo.active_branch.name})', 'cyan')
 
         if level == 'brief':
             modified = []
@@ -413,7 +414,7 @@ class PathFilter:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', action='store_true')
-    parser.add_argument('--debug',  action='store', nargs='?', default='disable')
+    parser.add_argument('--debug',  action='store', nargs='?', default='disabled')
 
     parser.add_argument('-v', '--verbose', action='store_true', default=False)
     parser.add_argument('-l', '--level', action='store', choices=['none', 'brief', 'normal', 'verbose'], default='brief')
@@ -430,14 +431,14 @@ def main():
     parser.add_argument('params', nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
-    if args.debug == 'disable':
-        args.debug = False
-    else:
-        if args.debug == 'wait':
-            input('Wait for debugging and press Enter to continue...')
-        else:
-            args.debug = True
+    
+    mapping = {'disabled' : '', None : 'enabled'}
+    if args.debug in mapping:
+        args.debug = mapping[args.debug]
+    if args.debug:
         print(f'> {projectName} args={args}')
+    if 'wait' in args.debug:
+        input('Wait for debugging and press Enter to continue...')
 
     if args.version:
         print(f'{projectName} version {projectVersion} powered by {projectAuthor}')
@@ -461,7 +462,7 @@ def main():
         raise RuntimeError(f'Invalid blacklist: {args.blacklist}')
     if args.whitelist and not os.path.exists(args.whitelist):
         raise RuntimeError(f'Invalid whitelist: {args.whitelist}')
-    if os.path.exists(f'{projectName}.blacklist'):
+    if not args.blacklist and os.path.exists(f'{projectName}.blacklist'):
         args.blacklist = f'{projectName}.blacklist'
 
     # 如果白名单被指定, 则使黑名单失效, 类似: --force
@@ -479,15 +480,27 @@ def main():
     matched = 0
     handler = RepoHandler()
     for path in RepoWalk(args.directory, args.recursive, debug=args.debug):
-        def filter(list, name):
-            matched = bool(list and list.match(path))
+        def filter(list, name, reverse=False):
+            '''
+            返回True表示被忽略, 黑名单匹配的项应该忽略, 而白名单匹配的项则反之, 名单未初始化则不参与过滤.
+            matched : reverse 的组合结果如下: 
+                1 : 0 = 1
+                0 : 0 = 0
+                1 : 1 = 0
+                0 : 1 = 1
+            '''
+            
+            if not list:
+                return False
+            matched = list.match(path)
             if args.debug:
-                if args.verbose:
+                if 'trace' in args.debug:
                     cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
-                if matched:
-                    cprint(f'> ignored repo that in {name}: {os.path.relpath(path, args.directory)}', 'yellow')
-            return matched
-        if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist'):
+                if matched ^ reverse:
+                    cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
+            return matched ^ reverse
+        
+        if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist', True):
             ignored += 1
             continue
 
