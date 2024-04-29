@@ -1,8 +1,11 @@
 #! python
 # -*- coding: utf-8 -*-
 #
-# This file is part of the gwalk distribution.
+# This file is part of the gwalk project.
 # Copyright (c) 2020-2024 zero.kwok@foxmail.com
+#
+# For the full copyright and license information, please view the LICENSE
+# file that was distributed with this source code.
 #
 # gwalk.py
 #
