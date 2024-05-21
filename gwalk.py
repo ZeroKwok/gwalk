@@ -79,6 +79,7 @@
 #                      这将在执行前被替换为相应的内容.
 #                        {ab} 或 {ActiveBranch} 将被替换为当前仓库的 活动分支名
 #                        {RepositoryName}       将被替换为当前仓库的 目录名
+#                        {cwd}                  将被替换为 --directory 指定的目录, 因为 . 是当前仓库的目录.
 
 import os
 import re
@@ -367,6 +368,8 @@ class RepoHandler:
                     cmd = cmd.replace('{ActiveBranch}', repo.repo.active_branch.name)
                 if '{RepositoryName}' in cmd:
                     cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
+                if '{cwd}' in cmd:
+                    cmd = cmd.replace('{cwd}', args.directory)
 
                 os.chdir(repo.repo.working_dir)
                 repo.code = RepoHandler.execute(cmd)
