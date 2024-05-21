@@ -45,6 +45,7 @@
 # 选项
 #   -h,--help       显示帮助信息
 #   --version       输出程序版本
+#   --debug         启用调试输出, 辅助调试过滤条件与执行的命令
 #
 #   -v,--verbose    列出仓库的同时, 还会输出尽可能详细的状态信息
 #   -l,--level      指定输出等级
@@ -373,6 +374,8 @@ class RepoHandler:
 
                 os.chdir(repo.repo.working_dir)
                 repo.code = RepoHandler.execute(cmd)
+                if args.debug:
+                    cprint(f'> Execute: {cmd} -> {repo.code}', 'red' if repo.code else 'yellow')
                 if repo.code == 0:
                     self.success.append(repo)
                 else:
