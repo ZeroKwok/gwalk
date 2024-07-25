@@ -10,7 +10,7 @@
 
 - 列出指定目录下的所有 Git 仓库，支持过滤条件、黑名单、白名单和递归搜索。
 - 显示列出的仓库的状态信息，支持输出信息的简短或冗长格式。
-- 可指定在每个列出的仓库中执行的任务，如运行自定义命令。
+- 可指定在每个列出的仓库中执行的任务，如运行自定义命令，类似于 `git submodule foreach 'some command'`。
 
 ```bash
 # 列出当前目录下所有的'脏'的 Git 仓库
@@ -48,6 +48,11 @@ gl.py
 # git pull {origin 或 第一个remotes} {当前分支} --rebase
 gl.py --rebase
 ```
+
+## 安装
+
+1. `git clone https://github.com/ZeroKwok/gwalk.git`
+2. 设置 PATH 环境变量，将 gwalk 目录添加到 PATH 中.
 
 ## 使用技巧
 
