@@ -529,6 +529,11 @@ def main():
     cprint('')
     cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
             'red' if handler.failure else 'white')
+    
+    if handler.failure:
+        cprint('The failed projects are as follows:', 'red')
+        for repo in handler.failure:
+            cprint(' - ' + os.path.relpath(repo.repo.working_dir, args.directory), 'red')
 
 if __name__ == '__main__':
     try:
