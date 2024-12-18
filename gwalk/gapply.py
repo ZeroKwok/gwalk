@@ -16,7 +16,7 @@
 import os
 import re
 import sys
-import gwalk
+from gwalk import gwalk
 
 def extract_subject_from_patch(patch_file):
     with open(patch_file, 'r') as file:
@@ -51,6 +51,7 @@ def stage_changes():
     if result != 0:
         gwalk.cprint(f"Failed to stage changes.", 'red')
         sys.exit(result)
+
 def commit_changes(subject):
     cmd = f'git commit -m "{subject}"'
     gwalk.cprint(f'> {cmd}', 'green')
@@ -76,6 +77,7 @@ def main():
         apply_patch(patch_file)
         stage_changes()
         commit_changes(subject)
+
 
 if __name__ == "__main__":
     main()

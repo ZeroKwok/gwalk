@@ -27,8 +27,8 @@
 #   commit      提交消息
 
 import os
-import gwalk
 import argparse
+from gwalk import gwalk
 
 class ResultError(RuntimeError):  
     def __init__(self, message, ecode):  
@@ -43,7 +43,7 @@ def execute(commands:str, onlyShow:bool=False):
    if code != 0:
       raise ResultError(f'Run: {commands}', code)
 
-if __name__ == '__main__':
+def main():
    try:
       parser = argparse.ArgumentParser()
       parser.add_argument('-a', '--all', action='store_true')
@@ -85,3 +85,7 @@ if __name__ == '__main__':
       exit(0)
    except ResultError as e:
       exit(e.ecode)
+
+
+if __name__ == '__main__':
+   main()

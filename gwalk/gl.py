@@ -8,10 +8,10 @@
 # file that was distributed with this source code.
 
 import os
-import gwalk     
 import argparse
+from gwalk import gwalk
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rebase', action='store_true')
     args = parser.parse_args()
@@ -34,3 +34,7 @@ if __name__ == '__main__':
     cmd = f'git pull {remote} {branch} {rebase}'
     gwalk.cprint(f'> {cmd}', 'green')
     exit(gwalk.RepoHandler.execute(cmd))
+
+
+if __name__ == '__main__':
+    main()

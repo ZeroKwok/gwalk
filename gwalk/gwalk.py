@@ -420,7 +420,7 @@ class PathFilter:
                 return True
         return False
 
-def main():
+def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', action='store_true')
     parser.add_argument('--debug',  action='store', nargs='?', default='disabled')
@@ -535,8 +535,13 @@ def main():
         for repo in handler.failure:
             cprint(' - ' + os.path.relpath(repo.repo.working_dir, args.directory), 'red')
 
-if __name__ == '__main__':
+
+def main():
     try:
-        main()
+        cli()
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == '__main__':
+    main()
