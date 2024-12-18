@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gwalk"
+name = "pygwalk"
 authors = [{ name = "Zero Kwok", email = "zero.kwok@foxmail.com" }]
 description = "gwalk 是一系列用于管理 Git 仓库的命令行小工具，帮助开发者对大批量的 Git 仓库进行日常维护。"
 keywords = ["git", "tools"]

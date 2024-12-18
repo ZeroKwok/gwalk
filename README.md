@@ -6,7 +6,7 @@
 
 ### 1. pip
 
-1. `python -m pip install gwalk`
+1. `python -m pip install pygwalk`
 
 ### 2. build from source
 
