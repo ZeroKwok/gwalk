@@ -82,6 +82,9 @@ gwalk -rf modified --blacklist gwalk.blacklist --a "gcp -p"
 # 在列出的所有 白名单 gwalk.whitelist 匹配的仓库中, 运行 git tag v1.5.0
 gwalk -rf all --whitelist gwalk.whitelist -a run git tag v1.5.0
 
+# 批量查看目录下所有仓库的最近3次提交
+gwalk -f all -l none -a run "git log --oneline -n3"
+
 # 批量替换 origin 远程仓库的地址, 从 github.com 替换成 gitee.com
 # 在所有 gwalk 列出的仓库中, 执行自定义命令
 gwalk -rf all -a run git remote set-url origin `echo \`git remote get-url origin\` | python -c "print(input().replace('github.com', 'gitee.com'))"`
