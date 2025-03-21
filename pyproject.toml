@@ -9,12 +9,17 @@ description = "gwalk 是一系列用于管理 Git 仓库的命令行小工具，
 keywords = ["git", "tools"]
 readme = "README.md"
 requires-python = ">=3.7"
-license = { file = "LICENSE" }
+license = {text = "MIT License"}
 classifiers = [
+    # How mature is this project? Common values are
+    #   3 - Alpha
+    #   4 - Beta
+    #   5 - Production/Stable
+    "Development Status :: 5 - Production/Stable",
+
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Environment :: MacOS X",
-    "Environment :: Win32 (MS Windows)",
+    "Topic :: Software Development :: Build Tools",
+
     "Programming Language :: Python",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
@@ -23,7 +28,6 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Topic :: Software Development :: Build Tools",
 ]
 dependencies = [
     "GitPython",
