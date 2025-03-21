@@ -431,23 +431,83 @@ class PathFilter:
         return False
 
 def cli():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--version', action='store_true')
-    parser.add_argument('--debug',  action='store', nargs='?', default='disabled')
+    parser = argparse.ArgumentParser(
+        description='''Git Repository Walker and Batch Operation Tool
 
-    parser.add_argument('-v', '--verbose', action='store_true', default=False)
-    parser.add_argument('-l', '--level', action='store', choices=['none', 'brief', 'normal', 'verbose'], default='brief')
+Features:
+1. List and filter Git repositories:
+   - By status (modified/untracked/dirty/clean)
+   - Using blacklist/whitelist patterns
+   - With recursive directory scanning
+2. Display repository status information
+3. Execute batch operations on matched repositories
 
-    parser.add_argument('-d', '--directory', action='store', default=os.getcwd())
-    parser.add_argument('-r', '--recursive', action='store_true', default=False)
+Examples:
+  gwalk                # List all 'dirty' repos in current directory
+  gwalk -rf all        # Recursively list all repos
+  gwalk -a run gl      # Run 'gl' (git fetch && git pull) in each matched repo
+  gwalk -a bash        # Open bash shell in each repo for manual operations''',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
 
-    parser.add_argument('-f', '--filter', action='store', choices=['all', 'clean', 'dirty', 'modified', 'untracked'], default='dirty')
-    parser.add_argument('--blacklist', action='store', default='')
-    parser.add_argument('--whitelist', action='store', default='')
-    parser.add_argument('--force', action='store_true')
+    # Basic options
+    parser.add_argument('--version', action='store_true',
+                       help='show version information and exit')
+    parser.add_argument('--debug', action='store', nargs='?', default='disabled',
+                       help=argparse.SUPPRESS)
 
-    parser.add_argument('-a', '--action', action='store', choices=['bash', 'gui', 'run'], default=None)
-    parser.add_argument('params', nargs=argparse.REMAINDER)
+    parser.add_argument('-d', '--directory', action='store',
+                        default=os.getcwd(),
+                        help='base directory to search (default: current)')
+    parser.add_argument('-r', '--recursive', action='store_true',
+                        help='search subdirectories recursively')
+
+    # Filter options
+    group_filter = parser.add_argument_group('Filter options')
+    group_filter.add_argument('-f', '--filter', action='store',
+                            choices=['all', 'clean', 'dirty', 'modified', 'untracked'],
+                            default='dirty',
+                            help='filter repositories by status:\n'
+                                'all       - match all states\n'
+                                'clean     - no changes\n'
+                                'dirty     - has changes (default)\n'
+                                'modified  - has uncommitted changes\n'
+                                'untracked - has untracked files')
+    group_filter.add_argument('--blacklist', action='store', default='',
+                            help='file containing paths to exclude\n'
+                                 '(defaults to gwalk.blacklist if exists)')
+    group_filter.add_argument('--whitelist', action='store', default='',
+                            help='file containing paths to include\n'
+                                 '(overrides blacklist if specified)')
+    group_filter.add_argument('--force', action='store_true',
+                            help='ignore blacklist filtering')
+
+    # Display options
+    group_display = parser.add_argument_group('Display Options')
+    group_display.add_argument('-v', '--verbose', action='store_true',
+                             help='show detailed repository information')
+    group_display.add_argument('-l', '--level', choices=['none', 'brief', 'normal', 'verbose'],
+                             default='brief',
+                             help='set output detail level:\n'
+                                  'none    - show paths only\n'
+                                  'brief   - show single-line status (default)\n'
+                                  'normal  - show git status output\n'
+                                  'verbose - show detailed git status')
+
+    # Action options
+    group_action = parser.add_argument_group('Action options')
+    group_action.add_argument('-a', '--action',
+                            choices=['bash', 'gui', 'run'],
+                            help='action to perform on matched repositories:\n'
+                                 'bash - open interactive shell\n'
+                                 'gui  - open Git GUI\n'
+                                 'run  - execute specified command')
+    group_action.add_argument('params', nargs=argparse.REMAINDER,
+                            help='command to execute (with -a run)\n'
+                                 'supports variables:\n'
+                                 '  {ab}, {ActiveBranch} - current branch name\n'
+                                 '  {RepositoryName}     - repository directory name\n'
+                                 '  {cwd}                - base search directory')
 
     args = parser.parse_args()
     
@@ -461,7 +521,7 @@ def cli():
 
     if args.version:
         print(f'{projectName} version {projectVersion} powered by {projectAuthor}')
-        print(f'Home: {projectHome}')
+        print(f'HomePage: {projectHome}')
         exit(0)
 
     # --verbose 优先
