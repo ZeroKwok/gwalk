@@ -115,32 +115,45 @@ class RepoWalk:
     def __iter__(self):
         if self.recursive:
             for root, dirs, files in os.walk(self.directory):
-                if RepoWalk.repoType(dirs, files) != 0:
+                if RepoWalk.repoTypeByFiles(dirs, files) != 0:
                     yield root
         else:
             for root, dirs, files in os.walk(self.directory):
-                if RepoWalk.isRepo(root):
+                if RepoWalk.isRepoRoot(root):
                     yield root
                 for d in dirs:
                     if d in ['.git', '.vs', '.vscode']:
                         continue
                     path = os.path.normpath(os.path.join(root, d))
-                    if RepoWalk.isRepo(path):
+                    if RepoWalk.isRepoRoot(path):
                         yield path
                 break
 
-    def repoType(dirs, files) -> int:
+    def repoTypeByFiles(dirs, files) -> int:
         '''0 None, 1 Normal, 2 Submodule'''
         if '.git' in dirs:
             return 1
         if '.git' in files:
             return 2
+
+        # TODO
+        # Check the config has bare = true
+        # Check the config has submodule = true
         return 0
 
-    def isRepo(directory) -> int:
+    def isRepoRoot(directory) -> int:
         for _, dirs, files in os.walk(directory):
-            return RepoWalk.repoType(dirs, files) != 0
+            return RepoWalk.repoTypeByFiles(dirs, files) != 0
         return False
+
+    def isRepo(directory) -> int:
+        try:
+            repo = git.Repo(directory)
+        except git.exc.InvalidGitRepositoryError:
+            return False
+        if repo.bare:
+            return False
+        return True
 
 # 参考文档
 # - [GitPython doc](https://gitpython.readthedocs.io/en/stable/)

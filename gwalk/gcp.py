@@ -49,6 +49,7 @@ def main():
       parser.add_argument('-a', '--all', action='store_true')
       parser.add_argument('-s', '--src', action='store', default=None)
       parser.add_argument('-p', '--push', action='store_true')
+      parser.add_argument('-i', '--ignore', action='store_true')
       parser.add_argument('--show', action='store_true')
       parser.add_argument('commit', nargs=argparse.REMAINDER)
       args = parser.parse_args()
@@ -57,6 +58,10 @@ def main():
 
       if not gwalk.RepoWalk.isRepo(os.getcwd()):
          gwalk.cprint(f'This is not an valid git repository.', 'red')
+         exit(1)
+
+      if not args.ignore and not gwalk.RepoWalk.isRepoRoot(os.getcwd()):
+         gwalk.cprint(f'This directory is not the root of the git repository; ignore this with the -i option.', 'yellow')
          exit(1)
 
       repo = gwalk.RepoStatus(os.getcwd()).load()
