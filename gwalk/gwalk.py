@@ -92,7 +92,7 @@ import traceback
 
 projectName    = 'gwalk'
 projectHome    = 'https://github.com/ZeroKwok/gwalk.git'
-projectVersion = '0.2.1 beta'
+projectVersion = '0.2.1'
 projectAuthor  = 'zero.kwok@foxmail.com'
 
 try:
