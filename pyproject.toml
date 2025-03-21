@@ -36,7 +36,7 @@ dependencies = [
 dynamic = ["version"]
 
 [tool.setuptools.dynamic]
-version = {attr = "gwalk.gwalk.projectVersion"}
+version = {attr = "gwalk.projectVersion"}
 
 [project.urls]
 Homepage = "https://github.com/ZeroKwok/gwalk"
