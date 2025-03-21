@@ -12,9 +12,20 @@ import argparse
 from gwalk import gwalk
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--rebase', action='store_true')
-    parser.add_argument('-q', '--quick', action='store_true')
+    parser = argparse.ArgumentParser(
+        description='''A Git helper tool that combines `fetch` and `pull` operations.
+
+This tool helps streamline common Git operations by:
+- Fetching updates from all remote repositories (unless -q is used)
+- Pulling changes from the default remote (origin or first available) to the current branch''',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument('-q', '--quick', action='store_true',
+                       help='quick mode: skip fetching from remote repositories\n'
+                            'and only perform git pull')
+    parser.add_argument('--rebase', action='store_true',
+                       help='use rebase instead of merge when pulling\n'
+                            '(equivalent to git pull --rebase)')
     args = parser.parse_args()
 
     if not gwalk.RepoWalk.isRepo(os.getcwd()):

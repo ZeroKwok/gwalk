@@ -45,13 +45,41 @@ def execute(commands:str, onlyShow:bool=False):
 
 def main():
    try:
-      parser = argparse.ArgumentParser()
-      parser.add_argument('-a', '--all', action='store_true')
-      parser.add_argument('-s', '--src', action='store', default=None)
-      parser.add_argument('-p', '--push', action='store_true')
-      parser.add_argument('-i', '--ignore', action='store_true')
-      parser.add_argument('--show', action='store_true')
-      parser.add_argument('commit', nargs=argparse.REMAINDER)
+      parser = argparse.ArgumentParser(
+         description='''A Git helper tool that combines `commit` and `push` operations.
+
+This tool streamlines git workflow by combining multiple operations:
+1. Automatically adds modified files (git add -u)
+   - With -a option: adds all files including untracked (git add -A)
+2. Commits changes with message or opens editor
+3. Pushes to all configured remote repositories
+
+Examples:
+  gcp "fix bugs"     # Add modified files, commit, and push to all remotes
+  gcp -a "new feat"  # Add all files (including untracked), commit, and push
+  gcp -p             # Push only mode, skips add/commit steps
+  gcp --show         # Show commands without executing (dry-run)''',
+         formatter_class=argparse.RawTextHelpFormatter,
+         epilog='Note: By default, this tool must be run from repository root.'
+      )
+      parser.add_argument('commit', nargs=argparse.REMAINDER, 
+                         help='commit message (optional)\n'
+                              'if not provided, opens the git commit editor')
+      parser.add_argument('-a', '--all', action='store_true',
+                         help='stage all changes including untracked files\n'
+                              '(equivalent to git add -A instead of git add -u)')
+      parser.add_argument('-p', '--push', action='store_true',
+                         help='push-only mode: skip add and commit steps\n'
+                              'pushes current or specified branch to all remotes')
+      parser.add_argument('-s', '--src', metavar='BRANCH',
+                         help='source branch/tag to push (optional)\n'
+                              'defaults to current branch if not specified')
+      parser.add_argument('-i', '--ignore', action='store_true',
+                         help='ignore repository root check\n'
+                              'allows running from any subdirectory')
+      parser.add_argument('--show', action='store_true',
+                         help='dry-run mode: show commands without executing\n'
+                              'useful for reviewing what would be done')
       args = parser.parse_args()
 
       args.commit = ' '.join(args.commit)
