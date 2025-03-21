@@ -16,6 +16,7 @@
 import os
 import re
 import sys
+import argparse
 from gwalk import gwalk
 
 def extract_subject_from_patch(patch_file):
@@ -61,23 +62,34 @@ def commit_changes(subject):
         sys.exit(result)
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: gapply.py <patch_file ...>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='A Git helper tool that combines `git apply` and `git commit` operations.',
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog='Note: Patches should be in git format-patch style'
+    )
+    parser.add_argument('patch_files', nargs='+', metavar='patch_file',
+                       help='one or more patch files to apply\n')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='show detailed progress information')
+    args = parser.parse_args()
 
-    for patch_file in sys.argv[1:]:
+    for patch_file in args.patch_files:
         if not os.path.isfile(patch_file):
-            gwalk.cprint(f"Patch file {patch_file} does not exist", 'red')
+            gwalk.cprint(f"Patch file not found: {patch_file}", 'red')
             sys.exit(1)
+
+        if args.verbose:
+            gwalk.cprint(f"Processing patch: {patch_file}", 'green')
 
         subject = extract_subject_from_patch(patch_file)
         if not subject:
             subject = extract_subject_from_filename(patch_file)
+            if args.verbose:
+                gwalk.cprint(f"Using filename-based subject: {subject}", 'yellow')
 
         apply_patch(patch_file)
         stage_changes()
         commit_changes(subject)
-
 
 if __name__ == "__main__":
     main()
