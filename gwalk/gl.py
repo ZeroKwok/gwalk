@@ -14,6 +14,7 @@ from gwalk import gwalk
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rebase', action='store_true')
+    parser.add_argument('-q', '--quick', action='store_true')
     args = parser.parse_args()
 
     if not gwalk.RepoWalk.isRepo(os.getcwd()):
@@ -22,6 +23,14 @@ def main():
 
     repo   = gwalk.git.Repo(os.getcwd())
     branch = repo.active_branch.name
+
+    if not args.quick:
+        for remote in repo.remotes:
+            cmd = f'git fetch {remote.name}'
+            gwalk.cprint(f'> {cmd}', 'green')
+            if gwalk.RepoHandler.execute(cmd) != 0:
+                gwalk.cprint(f'> Warning: remote "{{remote.name}}" fetch failed', 'yellow')
+
     remote = 'origin'
     if not remote in repo.remotes:
         if len(repo.remotes) > 0:
