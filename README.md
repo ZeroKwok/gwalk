@@ -22,11 +22,15 @@
 
 ```bash
 # 从远程仓库拉取代码并合并到当前分支, 等价于下面的命令 
-# git pull {origin 或 第一个remotes} {当前分支}
+# 1. git fetch {all remotes}
+# 2. git pull {origin 或 第一个remotes} {当前分支}
 gl
 
-# git pull {origin 或 第一个remotes} {当前分支} --rebase
+# git fetch and git pull {origin 或 第一个remotes} {当前分支} --rebase
 gl --rebase
+
+# git pull {origin 或 第一个remotes}
+gl -q
 ```
 
 ### 2. gcp
@@ -59,6 +63,24 @@ gwalk -rf all
 
 # 在列出的每个仓库中执行命令: git pull origin
 gwalk -rf all -a "run git pull origin"
+```
+
+### 4. gapply
+
+`gapply.py` 应用补丁文件并使用补丁中携带的信息创建提交。
+
+```bash
+# 应用单个补丁文件
+gapply fix-bug.patch
+
+# 批量应用多个补丁
+gapply patches/*.patch
+
+# 应用带编号前缀的补丁（自动去除编号前缀作为提交信息）
+gapply 001-feature.patch
+
+# 使用详细输出模式应用补丁
+gapply -v *.patch
 ```
 
 ## 使用技巧
