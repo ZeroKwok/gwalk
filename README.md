@@ -1,89 +1,93 @@
 # gwalk
 
-`gwalk` 是一系列用于管理 Git 仓库的命令行小工具，帮助开发者对大批量的 Git 仓库进行日常维护。
+![Version](https://img.shields.io/pypi/v/pygwalk)
+![Python](https://img.shields.io/pypi/pyversions/pygwalk)
+![License](https://img.shields.io/github/license/ZeroKwok/gwalk)
 
-## 安装
+gwalk 一个用于管理批量 Git 仓库的命令行工具集，帮助开发者对大批量的 Git 仓库进行日常维护。
 
-### 1. pip
+## ✨ 特性
 
-1. `python -m pip install pygwalk`
+- 🔍 列出指定目录下的 Git 仓库(可选递归)
+- 🎯 支持按状态过滤(modified/untracked/dirty/clean)
+- 📋 支持黑/白名单过滤
+- 🚀 支持批量执行命令
+- 🔄 集成常用 Git 操作的小工具
 
-### 2. build from source
+## 📦 安装
 
-1. `git clone https://github.com/ZeroKwok/gwalk.git`
-2. `cd gwalk`
-3. `python -m pip install .`
-
-## 使用
-
-### 1. gl
-
-`gl.py` 是 `git fetch` 以及 `git pull` 操作的快捷工具。
+### 通过 pip 安装
 
 ```bash
-# 从远程仓库拉取代码并合并到当前分支, 等价于下面的命令 
-# 1. git fetch {all remotes}
-# 2. git pull {origin 或 第一个remotes} {当前分支}
+python -m pip install pygwalk
+```
+
+### 从源码安装
+
+```bash
+git clone https://github.com/ZeroKwok/gwalk.git
+cd gwalk
+python -m pip install .
+```
+
+## 🔨 命令行工具
+
+### gl - Git Fetch & Pull
+
+快速执行 fetch 和 pull 操作:
+
+```bash
+# 拉取所有远程仓库并合并到当前分支
 gl
 
-# git fetch and git pull {origin 或 第一个remotes} {当前分支} --rebase
+# 使用 rebase 模式拉取
 gl --rebase
 
-# git pull {origin 或 第一个remotes}
+# 仅执行 pull (跳过 fetch)
 gl -q
 ```
 
-### 2. gcp
+### gcp - Git Commit & Push
 
-`gcp.py` 是用于执行 `git commit` 和 `git push` 操作快捷工具。
+快速提交并推送更改:
 
 ```bash
-# 添加未跟踪的文件以及已修改的文件，并提交到远程仓库, 等价于下面的命令 
-# git add -u && git commit -m "fix some bugs" && git push
-gcp "fix some bugs"
+# 提交修改并推送到所有远程仓库, 等价于
+# git add -u && git commit -m "your commit message" && git push
+gcp "your commit message"
 
-# 仅推送当前分支到所有远程仓库，不进行提交
+# 仅推送当前分支到所有远程仓库
 gcp -p
 ```
 
-### 3. gwalk
+### gwalk - 仓库批处理工具
 
-`gwalk.py` 是 `gwalk` 工具的主要组件，提供了以下功能：
-
-- 列出目录下的所有 Git 仓库，支持过滤条件、黑名单、白名单和目录递归。
-- 显示列出的仓库的状态信息，支持输出信息的简短或冗长格式。
-- 在每个列出的仓库中执行一个操作。如运行自定义命令: 类似于子仓库操作 `git submodule foreach 'some command'` 但更加灵活。
+用于批量管理 Git 仓库:
 
 ```bash
-# 列出当前目录下所有的'脏'的 Git 仓库
+# 列出当前目录下的所有 dirty 仓库
 gwalk
 
-# 递归列出当前目录下所有的 Git 仓库
+# 递归列出当前目录下的所有仓库
 gwalk -rf all
 
-# 在列出的每个仓库中执行命令: git pull origin
-gwalk -rf all -a "run git pull origin"
+# 在所有列出的仓库中执行 git fetch && git pull
+gwalk -rf all -a run gl
 ```
 
-### 4. gapply
+### gapply - 补丁应用工具
 
-`gapply.py` 应用补丁文件并使用补丁中携带的信息创建提交。
+应用补丁并创建提交:
 
 ```bash
-# 应用单个补丁文件
+# 应用单个补丁
 gapply fix-bug.patch
 
-# 批量应用多个补丁
-gapply patches/*.patch
-
-# 应用带编号前缀的补丁（自动去除编号前缀作为提交信息）
-gapply 001-feature.patch
-
-# 使用详细输出模式应用补丁
-gapply -v *.patch
+# 批量应用补丁并输出详细信息
+gapply -v patches/*.patch
 ```
 
-## 使用技巧
+## 📝 使用示例
 
 ```bash
 # 在所有 gwalk 列出的仓库中, 执行 gl 工具(git pull)
@@ -111,3 +115,7 @@ gwalk -f all -l none -a run "git log --oneline -n3"
 # 在所有 gwalk 列出的仓库中, 执行自定义命令
 gwalk -rf all -a run git remote set-url origin `echo \`git remote get-url origin\` | python -c "print(input().replace('github.com', 'gitee.com'))"`
 ```
+
+## 📄 协议
+
+本项目基于 MIT 协议开源 - 详见 [LICENSE](LICENSE) 文件
