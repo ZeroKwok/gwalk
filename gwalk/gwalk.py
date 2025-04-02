@@ -145,7 +145,7 @@ class RepoWalk:
 
     def isRepo(directory) -> int:
         try:
-            repo = git.Repo(directory)
+            repo = git.Repo(directory, search_parent_directories=True)
         except git.exc.InvalidGitRepositoryError:
             return False
         if repo.bare:
@@ -157,7 +157,7 @@ class RepoWalk:
 # - [How to manage git repositories with Python](https://linuxconfig.org/how-to-manage-git-repositories-with-python)
 class RepoStatus:
     def __init__(self, directory:str):
-        self.repo = git.Repo(directory)
+        self.repo = git.Repo(directory, search_parent_directories=True)
         self.status = []
 
     class AssetState:

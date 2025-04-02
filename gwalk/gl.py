@@ -32,7 +32,7 @@ This tool helps streamline common Git operations by:
         gwalk.cprint(f'This is not an valid git repository.', 'red')
         exit(1)
 
-    repo   = gwalk.git.Repo(os.getcwd())
+    repo   = gwalk.git.Repo(os.getcwd(), search_parent_directories=True)
     branch = repo.active_branch.name
 
     if not args.quick:
