@@ -40,7 +40,7 @@ This tool helps streamline common Git operations by:
             cmd = f'git fetch {remote.name}'
             gwalk.cprint(f'> {cmd}', 'green')
             if gwalk.RepoHandler.execute(cmd) != 0:
-                gwalk.cprint(f'> Warning: remote "{{remote.name}}" fetch failed', 'yellow')
+                gwalk.cprint(f'> Warning: remote "{remote.name}" fetch failed', 'yellow')
 
     remote = 'origin'
     if not remote in repo.remotes:
