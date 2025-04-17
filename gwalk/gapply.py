@@ -10,24 +10,45 @@
 # gapply.py (git apply patch and create commit)
 #
 # Syntax:
-#   gapply.py [-h] <patch_file ...> 
-# 
+#   gapply.py [-h] <patch_file ...>
+#
 
 import os
 import re
 import sys
 import argparse
 from gwalk import gwalk
+from email.header import decode_header
+
+def decoded_subject(line):
+    if line.startswith('=?'):
+        try:
+            decoded_parts = decode_header(line)
+            return ''.join(
+                part[0].decode(part[1] or 'utf8') if isinstance(part[0], bytes) 
+                else str(part[0])
+                for part in decoded_parts)
+        except:
+            return line
+    return line
 
 def extract_subject_from_patch(patch_file):
-    with open(patch_file, 'r') as file:
-        lines = file.readlines()
-    for line in lines:
-        if line.startswith("Subject:"):
-            subject = line[len("Subject:"):].strip()
-            # Remove [PATCH X/Y] if it exists
-            subject = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', subject)
-            return subject
+    subject_lines = []
+    with open(patch_file, "r", encoding="utf-8") as file:
+        is_join = False
+        for line in file:
+            if line.startswith("Subject:"):
+                is_join = True
+                line = line[len("Subject:") :].strip()               # Remove "Subject:"
+                line = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
+                subject_lines.append(decoded_subject(line))
+            elif is_join:
+                if line.startswith((' ', '\t')):
+                    subject_lines.append(decoded_subject(line.strip()))
+                else:
+                    is_join = False
+                    break
+        return ''.join(subject_lines)
     return None
 
 def extract_subject_from_filename(patch_file):
