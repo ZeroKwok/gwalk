@@ -58,24 +58,36 @@ def extract_subject_from_filename(patch_file):
     subject = subject.replace('-', ' ')
     return subject
 
-def apply_patch(patch_file):
+def apply_patch(patch_file, dry_run=False):
     cmd = f'git apply -v "{patch_file}"'
+    if dry_run:
+        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
+        return
+
     gwalk.cprint(f'> {cmd}', 'green')
     result = gwalk.RepoHandler.execute(cmd)
     if result != 0:
         gwalk.cprint(f"Failed to apply patch: {patch_file}", 'red')
         sys.exit(result)
 
-def stage_changes():
+def stage_changes(dry_run=False):
     cmd = f'git add -u'
+    if dry_run:
+        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
+        return
+
     gwalk.cprint(f'> {cmd}', 'green')
     result = gwalk.RepoHandler.execute(cmd)
     if result != 0:
         gwalk.cprint(f"Failed to stage changes.", 'red')
         sys.exit(result)
 
-def commit_changes(subject):
+def commit_changes(subject, dry_run=False):
     cmd = f'git commit -m "{subject}"'
+    if dry_run:
+        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
+        return
+
     gwalk.cprint(f'> {cmd}', 'green')
     result = gwalk.RepoHandler.execute(cmd)
     if result != 0:
@@ -92,6 +104,8 @@ def main():
                        help='one or more patch files to apply\n')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='show detailed progress information')
+    parser.add_argument('-n', '--dry-run', action='store_true',
+                       help='show what would be done without actually doing it')
     args = parser.parse_args()
 
     for patch_file in args.patch_files:
@@ -99,18 +113,18 @@ def main():
             gwalk.cprint(f"Patch file not found: {patch_file}", 'red')
             sys.exit(1)
 
-        if args.verbose:
+        if args.verbose or args.dry_run:
             gwalk.cprint(f"Processing patch: {patch_file}", 'green')
 
         subject = extract_subject_from_patch(patch_file)
         if not subject:
             subject = extract_subject_from_filename(patch_file)
-            if args.verbose:
+            if args.verbose or args.dry_run:
                 gwalk.cprint(f"Using filename-based subject: {subject}", 'yellow')
 
-        apply_patch(patch_file)
-        stage_changes()
-        commit_changes(subject)
+        apply_patch(patch_file, args.dry_run)
+        stage_changes(args.dry_run)
+        commit_changes(subject, args.dry_run)
 
 if __name__ == "__main__":
     main()
