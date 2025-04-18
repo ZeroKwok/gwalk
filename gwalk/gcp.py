@@ -20,11 +20,11 @@
 #      仅推送当前分支到所有远端, 不做提交
 #
 # 选项
-#   --show      仅显示执行命令，而不做任何改变
-#   -a,--all    添加未跟踪的文件以及已修改的文件
-#   -s,--src    要推送的本地仓库中的 分支 或 标签
-#   -p,--push   仅执行推送动作, 将忽略 --all 以及 commit
-#   commit      提交消息
+#   commit       提交消息
+#   -a,--all     添加未跟踪的文件以及已修改的文件
+#   -s,--src     要推送的本地仓库中的 分支 或 标签
+#   -p,--push    仅执行推送动作, 将忽略 --all 以及 commit
+#   -n,--dry-run 仅显示执行命令，而不做任何改变
 
 import os
 import argparse
@@ -35,13 +35,15 @@ class ResultError(RuntimeError):
         super().__init__(message)  
         self.ecode = ecode  
 
-def execute(commands:str, onlyShow:bool=False):
-   gwalk.cprint(commands, 'green')
-   if onlyShow:
+def execute(cmd:str, dry_run:bool=False):
+   if dry_run:
+      gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
       return
-   code = gwalk.RepoHandler.execute(commands)
+
+   gwalk.cprint(f'> {cmd}', 'green')
+   code = gwalk.RepoHandler.execute(cmd)
    if code != 0:
-      raise ResultError(f'Run: {commands}', code)
+      raise ResultError(f'Run: {cmd}', code)
 
 def main():
    try:
@@ -55,10 +57,10 @@ This tool streamlines git workflow by combining multiple operations:
 3. Pushes to all configured remote repositories
 
 Examples:
-  gcp "fix bugs"     # Add modified files, commit, and push to all remotes
-  gcp -a "new feat"  # Add all files (including untracked), commit, and push
-  gcp -p             # Push only mode, skips add/commit steps
-  gcp --show         # Show commands without executing (dry-run)''',
+  gcp "fix bugs"    # Add modified files, commit, and push to all remotes
+  gcp -a "new feat" # Add all files (including untracked), commit, and push
+  gcp -p            # Push only mode, skips add/commit steps
+  gcp -n            # Show commands without executing (dry-run)''',
          formatter_class=argparse.RawTextHelpFormatter,
          epilog='Note: By default, this tool must be run from repository root.'
       )
@@ -77,9 +79,8 @@ Examples:
       parser.add_argument('-i', '--ignore', action='store_true',
                          help='ignore repository root check\n'
                               'allows running from any subdirectory')
-      parser.add_argument('--show', action='store_true',
-                         help='dry-run mode: show commands without executing\n'
-                              'useful for reviewing what would be done')
+      parser.add_argument('-n', '--dry-run', action='store_true',
+                         help='show what would be done without actually doing it')
       args = parser.parse_args()
 
       args.commit = ' '.join(args.commit)
@@ -99,7 +100,7 @@ Examples:
 
       if args.push:
          for r in repo.repo.remotes:
-            execute(f'git push {r.name} {args.src}', args.show)
+            execute(f'git push {r.name} {args.src}', args.dry_run)
          exit(0)
 
       if repo.match('clean'):
@@ -108,13 +109,13 @@ Examples:
       execute('git status -s --untracked-files=normal')
 
       if repo.match('dirty' if args.all else 'modified'):
-         execute('git add -A' if args.all else 'git add -u', args.show)
+         execute('git add -A' if args.all else 'git add -u', args.dry_run)
          if args.commit:
-            execute(f'git commit -m "{args.commit}"', args.show)
+            execute(f'git commit -m "{args.commit}"', args.dry_run)
          else:
-            execute(f'git commit', args.show)
+            execute(f'git commit', args.dry_run)
          for r in repo.repo.remotes:
-            execute(f'git push {r.name} {args.src}', args.show)
+            execute(f'git push {r.name} {args.src}', args.dry_run)
       exit(0)
    except ResultError as e:
       exit(e.ecode)
