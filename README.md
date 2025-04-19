@@ -85,6 +85,9 @@ gapply fix-bug.patch
 
 # 批量应用补丁并输出详细信息
 gapply -v patches/*.patch
+
+# dry-run 模式, 仅显示执行过程, 不进行任何操作
+gapply -n patches/*.patch
 ```
 
 ## 📝 使用示例
