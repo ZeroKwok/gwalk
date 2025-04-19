@@ -32,73 +32,75 @@ def decoded_subject(line):
             return line
     return line
 
-def extract_subject_from_patch(patch_file):
-    subject_lines = []
+def extract_from_patch(patch_file):
+    metadata = {}
     with open(patch_file, "r", encoding="utf-8") as file:
-        is_join = False
+        last_line = None
+        subject_lines = []
+        subject_is_join = False
+        newfile_lines = []
         for line in file:
-            if line.startswith("Subject:"):
-                is_join = True
-                line = line[len("Subject:") :].strip()               # Remove "Subject:"
-                line = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
-                subject_lines.append(decoded_subject(line))
-            elif is_join:
-                if line.startswith((' ', '\t')):
-                    subject_lines.append(decoded_subject(line.strip()))
-                else:
-                    is_join = False
-                    break
-        return ''.join(subject_lines)
-    return None
+            if 'subject' not in metadata:
+                if line.startswith("Subject:"):
+                    subject_is_join = True
+                    line = line[len("Subject:") :].strip()               # Remove "Subject:"
+                    line = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
+                    subject_lines.append(decoded_subject(line))
+                elif subject_is_join:
+                    if line.startswith((' ', '\t')):
+                        subject_lines.append(decoded_subject(line.strip()))
+                    else:
+                        subject_is_join = False
+                        metadata['subject'] = ''.join(subject_lines)
 
-def extract_subject_from_filename(patch_file):
-    filename = os.path.splitext(os.path.basename(patch_file))[0]
-    subject = re.sub(r'^[0-9]+-', '', filename)
-    subject = re.sub(r'\.patch$', '', subject)
-    subject = subject.replace('-', ' ')
-    return subject
+            elif line.startswith('new file mode '):
+                old_file, new_file = re.search(r"diff --git a/(.+?) b/(.+)", last_line).groups()
+                assert old_file == new_file
+                newfile_lines.append(new_file)
+
+            last_line = line
+        metadata["newfiles"] = newfile_lines
+
+    return metadata
+
+def git_run(cmd, fallback, dry_run=False):
+    if dry_run:
+        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
+        return
+
+    gwalk.cprint(f'> {cmd}', 'green')
+    code = gwalk.RepoHandler.execute(cmd)
+    if code != 0 and  fallback:
+        fallback(code, cmd)
 
 def apply_patch(patch_file, dry_run=False):
-    cmd = f'git apply -v "{patch_file}"'
-    if dry_run:
-        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
-        return
+    def fallback(code, cmd):
+        gwalk.cprint(f"Failed to apply patch: {patch_file}, please operate manually.", 'red')
+        sys.exit(code)
+    git_run(f'git apply -v "{patch_file}"', fallback, dry_run)
 
-    gwalk.cprint(f'> {cmd}', 'green')
-    result = gwalk.RepoHandler.execute(cmd)
-    if result != 0:
-        gwalk.cprint(f"Failed to apply patch: {patch_file}", 'red')
-        sys.exit(result)
+def stage_changes(newfiles, dry_run=False):
+    def fallback(code, cmd):
+        gwalk.cprint(f"Failed to stage changes, please operate manually.", 'red')
+        sys.exit(code)
+    git_run(f'git add -u', fallback, dry_run)
 
-def stage_changes(dry_run=False):
-    cmd = f'git add -A'
-    if dry_run:
-        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
-        return
-
-    gwalk.cprint(f'> {cmd}', 'green')
-    result = gwalk.RepoHandler.execute(cmd)
-    if result != 0:
-        gwalk.cprint(f"Failed to stage changes.", 'red')
-        sys.exit(result)
+    cmdlist = [f'git add "{f}"' for f in newfiles]
+    for cmd in cmdlist:
+        git_run(cmd, fallback, dry_run)
 
 def commit_changes(subject, dry_run=False):
-    cmd = f'git commit -m "{subject}"'
-    if dry_run:
-        gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
-        return
+    def fallback(code, cmd):
+        gwalk.cprint(f"Failed to create commit, please operate manually.", 'red')
+        sys.exit(code)
+    git_run(f'git commit -m "{subject}"', fallback, dry_run)
 
-    gwalk.cprint(f'> {cmd}', 'green')
-    result = gwalk.RepoHandler.execute(cmd)
-    if result != 0:
-        gwalk.cprint(f"Failed to create commit.", 'red')
-        sys.exit(result)
 
 def main():
     parser = argparse.ArgumentParser(
         description='A Git helper tool that combines `git apply` and `git commit` operations.',
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog='Note: Patches should be in git format-patch style'
+        epilog='Note: It is recommended to use git format-patch style—it makes things easier!'
     )
     parser.add_argument('patch_files', nargs='+', metavar='patch_file',
                        help='one or more patch files to apply\n')
@@ -114,15 +116,23 @@ def main():
             sys.exit(1)
         gwalk.cprint(f"Patch: {patch_file}", 'magenta')
 
-        subject = extract_subject_from_patch(patch_file)
-        if not subject:
-            subject = extract_subject_from_filename(patch_file)
-            if args.verbose or args.dry_run:
-                gwalk.cprint(f"Using filename-based subject: {subject}", 'yellow')
+        metadata = extract_from_patch(patch_file)
+
+        if args.verbose or args.dry_run:
+            if 'subject' not in metadata:
+                gwalk.cprint(f"Subject not found, you'll need to enter it later", 'yellow')
+
+            for key in metadata:
+                if isinstance(metadata[key], str):
+                    gwalk.cprint(f" - {key: <8}: {metadata[key]}", 'white')
+                elif isinstance(metadata[key], list):
+                    gwalk.cprint(f" - {key: <8}: ", 'white')
+                    for item in metadata[key]:
+                        gwalk.cprint(f"  - {item}", 'white')
 
         apply_patch(patch_file, args.dry_run)
-        stage_changes(args.dry_run)
-        commit_changes(subject, args.dry_run)
+        stage_changes(metadata.get("newfiles", []), args.dry_run)
+        commit_changes(metadata.get("subject", None), args.dry_run)
 
 if __name__ == "__main__":
     main()
