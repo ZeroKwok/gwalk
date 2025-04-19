@@ -71,7 +71,7 @@ def apply_patch(patch_file, dry_run=False):
         sys.exit(result)
 
 def stage_changes(dry_run=False):
-    cmd = f'git add -u'
+    cmd = f'git add -A'
     if dry_run:
         gwalk.cprint(f'(dry-run) > {cmd}', 'cyan')
         return
@@ -112,9 +112,7 @@ def main():
         if not os.path.isfile(patch_file):
             gwalk.cprint(f"Patch file not found: {patch_file}", 'red')
             sys.exit(1)
-
-        if args.verbose or args.dry_run:
-            gwalk.cprint(f"Processing patch: {patch_file}", 'green')
+        gwalk.cprint(f"Patch: {patch_file}", 'magenta')
 
         subject = extract_subject_from_patch(patch_file)
         if not subject:
