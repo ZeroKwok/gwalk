@@ -77,17 +77,29 @@ gwalk -rf all -a run gl
 
 ### gapply - 补丁应用工具
 
-应用补丁并创建提交:
+应用补丁并创建提交(dry-run 模式):
 
 ```bash
-# 应用单个补丁
-gapply fix-bug.patch
+gapply -n patchs/0008-Add-cache-and-Settings-management-capabilities-suppo.patch 
+```
 
-# 批量应用补丁并输出详细信息
-gapply -v patches/*.patch
+输出如下:
 
-# dry-run 模式, 仅显示执行过程, 不进行任何操作
-gapply -n patches/*.patch
+```bash
+Patch: patchs/0008-Add-cache-and-Settings-management-capabilities-suppo.patch
+ - subject : Add cache and Settings management capabilities, supportfor environment detection
+ - newfiles: 
+  - src/shared/store/cache.js
+  - src/shared/store/preset.js
+  - src/shared/store/settings.js
+  - src/shared/utils/env.js
+(dry-run) > git apply -v "patchs/0008-Add-cache-and-Settings-management-capabilities-suppo.patch"
+(dry-run) > git add -u
+(dry-run) > git add "src/shared/store/cache.js"
+(dry-run) > git add "src/shared/store/preset.js"
+(dry-run) > git add "src/shared/store/settings.js"
+(dry-run) > git add "src/shared/utils/env.js"
+(dry-run) > git commit -m "Add cache and Settings management capabilities, supportfor environment detection"
 ```
 
 ## 📝 使用示例
