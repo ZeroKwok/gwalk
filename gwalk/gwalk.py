@@ -520,8 +520,9 @@ Examples:
         input('Wait for debugging and press Enter to continue...')
 
     if args.version:
-        print(f'{projectName} version {projectVersion} powered by {projectAuthor}')
-        print(f'HomePage: {projectHome}')
+        print(f'{projectName} {projectVersion}')
+        print(f'Author: {projectAuthor}')
+        print(f'Github: {projectHome}')
         exit(0)
 
     # --verbose 优先
