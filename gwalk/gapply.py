@@ -54,9 +54,19 @@ def extract_from_patch(patch_file):
                         metadata['subject'] = ''.join(subject_lines)
 
             elif line.startswith('new file mode '):
+                # diff --git a/.gitignore b/.gitignore
+                # new file mode 100644
+                # index 0000000..8296128
                 old_file, new_file = re.search(r"diff --git a/(.+?) b/(.+)", last_line).groups()
                 assert old_file == new_file
                 newfile_lines.append(new_file)
+            
+            elif line.startswith('rename to '):
+                # diff --git a/src/shared/utils/window-state.js b/src/main/window-state.js
+                # similarity index 100%
+                # rename from src/shared/utils/window-state.js
+                # rename to src/main/window-state.js
+                newfile_lines.append(line[len('rename to '):])
 
             last_line = line
         metadata["newfiles"] = newfile_lines
