@@ -109,6 +109,26 @@ def commit_changes(subject, dry_run=False):
         sys.exit(code)
     git_run(f'git commit -m "{subject}"', fallback, dry_run)
 
+def confirm_delete(patch_file):
+    while True:
+        answer = input(f"Delete patch file '{patch_file}'? [y/N]: ").strip().lower()
+        if answer in ('', 'n', 'no'):
+            return False
+        elif answer in ('y', 'yes'):
+            return True
+        print("Please answer 'y' or 'n'")
+
+def delete_patch_file(patch_file, dry_run=False):
+    if dry_run:
+        gwalk.cprint(f'(dry-run) Would delete patch file: {patch_file}', 'cyan')
+        return
+    
+    if confirm_delete(patch_file):
+        try:
+            os.remove(patch_file)
+            gwalk.cprint(f"Deleted patch file: {patch_file}", 'green')
+        except OSError as e:
+            gwalk.cprint(f"Failed to delete patch file: {e}", 'red')
 
 def main():
     parser = argparse.ArgumentParser(
@@ -122,6 +142,8 @@ def main():
                        help='show detailed progress information')
     parser.add_argument('-n', '--dry-run', action='store_true',
                        help='show what would be done without actually doing it')
+    parser.add_argument('-d', '--delete', action='store_true',
+                       help='delete patch file after successful application (with confirmation)')
     args = parser.parse_args()
 
     for patch_file in args.patch_files:
@@ -147,6 +169,9 @@ def main():
         apply_patch(patch_file, args.dry_run)
         stage_changes(metadata.get("newfiles", []), args.dry_run)
         commit_changes(metadata.get("subject", None), args.dry_run)
+        
+        if args.delete:
+            delete_patch_file(patch_file, args.dry_run)
 
 if __name__ == "__main__":
     main()
