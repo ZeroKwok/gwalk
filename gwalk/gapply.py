@@ -46,9 +46,9 @@ def extract_from_patch(patch_file):
                 # Subject: [PATCH 05/45] Add .env.developmen
                 if line.startswith("Subject:"):
                     subject_is_join = True
-                    line = line[len("Subject:") :].strip()               # Remove "Subject:"
-                    line = re.sub(r'\[PATCH\] ', '', line)               # Remove [PATCH] 
-                    line = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
+                    line = line[len("Subject:") :].strip()                # Remove "Subject:"
+                    line = re.sub(r'^\[PATCH\] ', '', line)               # Remove [PATCH] 
+                    line = re.sub(r'^\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
                     subject_lines.append(decoded_subject(line))
                 elif subject_is_join:
                     if line.startswith((' ', '\t')):
