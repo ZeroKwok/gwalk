@@ -41,9 +41,13 @@ def extract_from_patch(patch_file):
         newfile_lines = []
         for line in file:
             if 'subject' not in metadata:
+                # Subject: [PATCH] feat(window-state): Move window state management to a new
+                #  module
+                # Subject: [PATCH 05/45] Add .env.developmen
                 if line.startswith("Subject:"):
                     subject_is_join = True
                     line = line[len("Subject:") :].strip()               # Remove "Subject:"
+                    line = re.sub(r'\[PATCH\] ', '', line)               # Remove [PATCH] 
                     line = re.sub(r'\[PATCH [0-9]+/[0-9]+\] ', '', line) # Remove [PATCH X/Y]
                     subject_lines.append(decoded_subject(line))
                 elif subject_is_join:
