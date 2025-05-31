@@ -8,5 +8,5 @@ __author__  = "zero <zero.kwok@foxmail.com>"
 
 projectName    = 'gwalk'
 projectHome    = 'https://github.com/ZeroKwok/gwalk.git'
-projectVersion = f'{__version__} {__status__}'
+projectVersion = f'{__version__} {__status__}'.strip()
 projectAuthor  = __author__
