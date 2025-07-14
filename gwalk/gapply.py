@@ -16,6 +16,8 @@
 import os
 import re
 import sys
+import time
+import random
 import argparse
 from gwalk import gwalk
 from email.header import decode_header
@@ -146,7 +148,15 @@ def main():
                        help='delete patch file after successful application (with confirmation)')
     parser.add_argument('-D', '--force-delete', action='store_true', 
                        help='force delete without confirmation')
+    parser.add_argument('-j', '--jitter', metavar='MIN-MAX', 
+                        help='after successful operation, wait a random number of seconds in the given MIN-MAX range (e.g., 3-8)')
     args = parser.parse_args()
+
+    if args.jitter:
+        try:
+            args.jitterRange = tuple(map(float, args.jitter.strip().split('-')))
+        except Exception as e:
+            gwalk.cprint(f"Invalid jitter range format: {args.jitter}. Expected format like 2-5. Skipping delay.", 'red')
 
     for patch_file in args.patch_files:
         if not os.path.isfile(patch_file):
@@ -171,9 +181,16 @@ def main():
         apply_patch(patch_file, args.dry_run)
         stage_changes(metadata.get("newfiles", []), args.dry_run)
         commit_changes(metadata.get("subject", None), args.dry_run)
-        
+
+        # Delete patch file
         if args.delete or args.force_delete:
             delete_patch_file(patch_file, args.dry_run, args.force_delete)
+
+        # Jitter
+        if args.jitterRange:
+            wait_time = random.uniform(*args.jitterRange)
+            gwalk.cprint(f"Sleeping for {wait_time:.2f} seconds (jitter) ...")
+            time.sleep(wait_time)
 
 if __name__ == "__main__":
     main()
