@@ -158,7 +158,7 @@ def main():
         except Exception as e:
             gwalk.cprint(f"Invalid jitter range format: {args.jitter}. Expected format like 2-5. Skipping delay.", 'red')
 
-    for patch_file in args.patch_files:
+    for index, patch_file in enumerate(args.patch_files):
         if not os.path.isfile(patch_file):
             gwalk.cprint(f"Patch file not found: {patch_file}", 'red')
             sys.exit(1)
@@ -187,7 +187,7 @@ def main():
             delete_patch_file(patch_file, args.dry_run, args.force_delete)
 
         # Jitter
-        if args.jitterRange:
+        if args.jitterRange and (index + 1) < len(args.patch_files):
             wait_time = random.uniform(*args.jitterRange)
             gwalk.cprint(f"Sleeping for {wait_time:.2f} seconds (jitter) ...")
             time.sleep(wait_time)
