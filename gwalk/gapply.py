@@ -187,7 +187,7 @@ def main():
             delete_patch_file(patch_file, args.dry_run, args.force_delete)
 
         # Jitter
-        if args.jitterRange and (index + 1) < len(args.patch_files):
+        if hasattr(args, 'jitterRange') and (index + 1) < len(args.patch_files):
             wait_time = random.uniform(*args.jitterRange)
             gwalk.cprint(f"Sleeping for {wait_time:.2f} seconds (jitter) ...")
             time.sleep(wait_time)

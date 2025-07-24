@@ -3,7 +3,7 @@ gwalk 是一系列用于管理 Git 仓库的命令行小工具，帮助开发者
 """
 
 __version__ = "0.2.5"
-__status__  = "beta0"
+__status__  = "beta1"
 __author__  = "zero <zero.kwok@foxmail.com>"
 
 projectName    = 'gwalk'
