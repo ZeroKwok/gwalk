@@ -47,12 +47,12 @@
 #   --version       输出程序版本
 #   --debug         启用调试输出, 辅助调试过滤条件与执行的命令
 #
-#   -v,--verbose    列出仓库的同时, 还会输出尽可能详细的状态信息
+#   -v,--verbose    启用详细输出
 #   -l,--level      指定输出等级
 #       'none'        仅列出仓库, 不打印仓库状态
 #       'brief'       列出仓库的同时, 还会输出只有一行的简短信息(默认)
 #       'normal'      列出仓库的同时, 还会输出一般的仓库的状态信息
-#       'verbose'     同--verbose
+#       'verbose'     列出仓库的同时, 还会输出尽可能详细的状态信息
 #
 #   -d,--directory  指定目录下搜索Git仓库, 默认是程序的当前目录
 #   -r,--recursive  指定是否进入子文件夹, 从而列出尽可能多的仓库
@@ -104,10 +104,10 @@ except KeyboardInterrupt:
     exit(1)
 
 class RepoWalk:
-    def __init__(self, directory:str, recursive:bool=False, debug:bool=False):
+    def __init__(self, directory:str, recursive:bool=False, verbose:int=0):
         self.directory = directory
         self.recursive = recursive
-        self.debug = debug
+        self.verbose = verbose
 
     def __iter__(self):
         if self.recursive:
@@ -384,7 +384,7 @@ class RepoHandler:
 
                 os.chdir(repo.repo.working_dir)
                 repo.code = RepoHandler.execute(cmd)
-                if args.debug:
+                if args.verbose:
                     cprint(f'> Execute: {cmd} -> {repo.code}', 'red' if repo.code else 'yellow')
                 if repo.code == 0:
                     self.success.append(repo)
@@ -453,8 +453,7 @@ Examples:
     # Basic options
     parser.add_argument('--version', action='store_true',
                        help='show version information and exit')
-    parser.add_argument('--debug', action='store', nargs='?', default='disabled',
-                       help=argparse.SUPPRESS)
+    parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
     parser.add_argument('-d', '--directory', action='store',
                         default=os.getcwd(),
@@ -484,15 +483,14 @@ Examples:
 
     # Display options
     group_display = parser.add_argument_group('Display Options')
-    group_display.add_argument('-v', '--verbose', action='store_true',
-                             help='show detailed repository information')
-    group_display.add_argument('-l', '--level', choices=['none', 'brief', 'normal', 'verbose'],
+    group_display.add_argument("-v", "--verbose", action="count", default=0, 
+                               help="enable verbose output")
+    group_display.add_argument('-l', '--level', choices=['none', 'brief', 'normal'],
                              default='brief',
                              help='set output detail level:\n'
                                   'none    - show paths only\n'
                                   'brief   - show single-line status (default)\n'
-                                  'normal  - show git status output\n'
-                                  'verbose - show detailed git status')
+                                  'normal  - show git status output\n')
 
     # Action options
     group_action = parser.add_argument_group('Action options')
@@ -510,13 +508,9 @@ Examples:
                                  '  {cwd}                - base search directory')
 
     args = parser.parse_args()
-    
-    mapping = {'disabled' : '', None : 'enabled'}
-    if args.debug in mapping:
-        args.debug = mapping[args.debug]
+
     if args.debug:
-        print(f'> {projectName} args={args}')
-    if 'wait' in args.debug:
+        args.verbose += 1
         input('Wait for debugging and press Enter to continue...')
 
     if args.version:
@@ -525,11 +519,6 @@ Examples:
         print(f'Github: {projectHome}')
         exit(0)
 
-    # --verbose 优先
-    if args.verbose:
-        args.level = 'verbose'
-
-    # 观察
     args.untracked_files = 'normal'
     if args.level == 'verbose':
         args.untracked_files = 'all'
@@ -552,14 +541,14 @@ Examples:
         args.blacklist = ''
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
-    if args.debug:
+    if args.verbose:
         cprint(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'), 'yellow')
         cprint(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'), 'yellow')
 
     ignored = 0
     matched = 0
     handler = RepoHandler()
-    for path in RepoWalk(args.directory, args.recursive, debug=args.debug):
+    for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
         def filter(list, name, reverse=False):
             '''
             返回True表示被忽略, 黑名单匹配的项应该忽略, 而白名单匹配的项则反之, 名单未初始化则不参与过滤.
@@ -573,9 +562,8 @@ Examples:
             if not list:
                 return False
             matched = list.match(path)
-            if args.debug:
-                if 'trace' in args.debug:
-                    cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
+            if args.verbose:
+                cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
                 if matched ^ reverse:
                     cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
             return matched ^ reverse
@@ -589,7 +577,7 @@ Examples:
             repo.load()
         if not repo.match(args.filter):
             ignored += 1
-            if args.debug:
+            if args.verbose:
                 cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
             continue
 
