@@ -25,7 +25,7 @@
 #   - run CMD
 #     在仓库中执行命令: CMD
 #   - git gui
-#     在仓库中唤起: Git Gui 
+#     在仓库中唤起: Git Gui
 #   - git bash
 #     在仓库中唤起: Git Bash
 #
@@ -76,7 +76,7 @@
 #   -a,--action     指定在每个列出的仓库中执行的任务
 #       'gui'         在每个列出的仓库唤出 Git Gui  来处理用户的操作
 #       'bash'        在每个列出的仓库唤出 Git Bash 来处理用户的操作
-#       'run CMD'     在每个列出的仓库执行 CMD 指定的命令, 可以在命令中包含下列"变量"(不区分大小写), 
+#       'run CMD'     在每个列出的仓库执行 CMD 指定的命令, 可以在命令中包含下列"变量"(不区分大小写),
 #                      这将在执行前被替换为相应的内容.
 #                        {ab} 或 {ActiveBranch} 将被替换为当前仓库的 活动分支名
 #                        {RepositoryName}       将被替换为当前仓库的 目录名
@@ -349,13 +349,27 @@ class RepoHandler:
     def __init__(self):
         self.success = []
         self.failure = []
-        
+
+    @staticmethod
+    def _format_cmd(repo, args):
+        cmd = ' '.join(args.params)
+        if '{ab}' in cmd:
+            cmd = cmd.replace('{ab}', repo.repo.active_branch.name)
+        if '{ActiveBranch}' in cmd:
+            cmd = cmd.replace('{ActiveBranch}', repo.repo.active_branch.name)
+        if '{RepositoryName}' in cmd:
+            cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
+        if '{cwd}' in cmd:
+            cmd = cmd.replace('{cwd}', args.directory)
+        return cmd
+
+    @staticmethod
     def execute(cmd:str) -> int:
         code = os.system(cmd)
         if platform.system().lower() != 'windows':
             code >>= 8
         return code
-    
+
     def perform(self, repo, args):
         lastcwd = os.getcwd()
         try:
@@ -372,30 +386,106 @@ class RepoHandler:
                 os.system('git gui')
 
             elif args.action == 'run':
-                cmd = ' '.join(args.params)
-                if '{ab}' in cmd:
-                    cmd = cmd.replace('{ab}', repo.repo.active_branch.name)
-                if '{ActiveBranch}' in cmd:
-                    cmd = cmd.replace('{ActiveBranch}', repo.repo.active_branch.name)
-                if '{RepositoryName}' in cmd:
-                    cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
-                if '{cwd}' in cmd:
-                    cmd = cmd.replace('{cwd}', args.directory)
+                cmd = self._format_cmd(repo, args)
 
                 os.chdir(repo.repo.working_dir)
-                repo.code = RepoHandler.execute(cmd)
+                repo.code = self.execute(cmd)
                 if args.verbose:
                     cprint(f'> Execute: {cmd} -> {repo.code}', 'red' if repo.code else 'yellow')
                 if repo.code == 0:
                     self.success.append(repo)
                 else:
                     self.failure.append(repo)
-                    
+
         except Exception as e:
             traceback.print_exc()
 
         finally:
             os.chdir(lastcwd)
+
+    def report(self, prefix:str=''):
+        if self.success or self.failure:
+            return prefix + f'Run result: success {len(self.success)}, failure {len(self.failure)}'
+        else:
+            return ''
+
+import asyncio
+from typing import List, Dict, Optional, Tuple
+
+class RepoAsyncHandler:
+    class Result:
+        repo: any
+        code: int = None
+        stdout: str = ""
+        stderr: str = ""
+        exception: Exception = None
+
+    def __init__(self):
+        self.success: List[RepoAsyncHandler.Result] = []
+        self.failure: List[RepoAsyncHandler.Result] = []
+        self.tasks: List[asyncio.Task] = []
+
+    async def execute(self, repo, cmd:str) -> Result:
+        try:
+            process = await asyncio.create_subprocess_shell(
+                cmd, 
+                cwd=repo.repo.working_dir,
+                stdout=asyncio.subprocess.PIPE, 
+                stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await process.communicate()
+
+            code = process.returncode
+            if platform.system().lower() != 'windows':
+                code >>= 8
+
+            result = RepoAsyncHandler.Result()
+            result.repo = repo
+            result.code = code
+            result.stdout = stdout.decode('utf-8').rstrip('\n')
+            result.stderr = stderr.decode('utf-8').rstrip('\n')
+            return result
+
+        except Exception as e:
+            result = RepoAsyncHandler.Result()
+            result.repo = repo
+            result.exception = e
+            return result
+
+    def perform(self, repo, args):
+        cmd = RepoHandler._format_cmd(repo, args)
+        task = asyncio.create_task(self.execute(repo, cmd))
+        self.tasks.append(task)
+
+    def join(self):
+        results = asyncio.run(asyncio.gather(*self.tasks))
+        for result in results:
+            if result.exception is not None or result.code != 0:
+                self.failure.append(result)
+            else:
+                self.success.append(result)
+
+    def print_failure(self, root:str, verbose:int):
+        if not self.failure:
+            return
+
+        cprint('Failure:', 'red')
+        for result in self.failure:
+            cprint(f'- {os.path.relpath(result.repo.repo.working_dir, root)}', 'yellow')
+            if result.exception is not None:
+                cprint(f'  Exception: {result.exception}', 'red')
+            else:
+                cprint(f'  Code: {result.code}', 'red')
+
+                output = lambda buf: (
+                       (verbose >= 2 and buf.splitlines())
+                    or (verbose  and buf.splitlines()[-20:]) 
+                    or buf.splitlines()[-10:]
+                )
+
+                if result.stdout:
+                    cprint(f'  Stdout: {output(result.stdout)}', 'red')
+                if result.stderr:
+                    cprint(f'  Stderr: {output(result.stderr)}', 'red')
 
     def report(self, prefix:str=''):
         if self.success or self.failure:
@@ -495,11 +585,13 @@ Examples:
     # Action options
     group_action = parser.add_argument_group('Action options')
     group_action.add_argument('-a', '--action',
-                            choices=['bash', 'gui', 'run'],
+                            choices=['bash', 'gui', 'run', ''],
                             help='action to perform on matched repositories:\n'
                                  'bash - open interactive shell\n'
                                  'gui  - open Git GUI\n'
                                  'run  - execute specified command')
+    group_action.add_argument('-j', '--jobs', action='store', default='', 
+                            help='number of parallel jobs for "run" action\n')
     group_action.add_argument('params', nargs=argparse.REMAINDER,
                             help='command to execute (with -a run)\n'
                                  'supports variables:\n'
@@ -558,7 +650,7 @@ Examples:
                 1 : 1 = 0
                 0 : 1 = 1
             '''
-            
+
             if not list:
                 return False
             matched = list.match(path)
@@ -567,7 +659,7 @@ Examples:
                 if matched ^ reverse:
                     cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
             return matched ^ reverse
-        
+
         if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist', True):
             ignored += 1
             continue
@@ -588,7 +680,7 @@ Examples:
     cprint('')
     cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
             'red' if handler.failure else 'white')
-    
+
     if handler.failure:
         cprint('The failed projects are as follows:', 'red')
         for repo in handler.failure:
