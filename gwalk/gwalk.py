@@ -346,6 +346,10 @@ class RepoStatus:
                 os.chdir(lastcwd)
 
 class RepoHandler:
+    class Result:
+        repo: any = None
+        code: int = None
+
     def __init__(self):
         self.success = []
         self.failure = []
@@ -389,13 +393,17 @@ class RepoHandler:
                 cmd = self._format_cmd(repo, args)
 
                 os.chdir(repo.repo.working_dir)
-                repo.code = self.execute(cmd)
+
+                result = RepoHandler.Result()
+                result.repo = repo
+                result.code = self.execute(cmd)
                 if args.verbose:
                     cprint(f'> Execute: {cmd} -> {repo.code}', 'red' if repo.code else 'yellow')
-                if repo.code == 0:
-                    self.success.append(repo)
+
+                if result.code == 0:
+                    self.success.append(result)
                 else:
-                    self.failure.append(repo)
+                    self.failure.append(result)
 
         except Exception as e:
             traceback.print_exc()
@@ -410,11 +418,13 @@ class RepoHandler:
             return ''
 
 import asyncio
+import threading
+import concurrent.futures
 from typing import List, Dict, Optional, Tuple
 
 class RepoAsyncHandler:
     class Result:
-        repo: any
+        repo: any = None
         code: int = None
         stdout: str = ""
         stderr: str = ""
@@ -423,7 +433,14 @@ class RepoAsyncHandler:
     def __init__(self):
         self.success: List[RepoAsyncHandler.Result] = []
         self.failure: List[RepoAsyncHandler.Result] = []
-        self.tasks: List[asyncio.Task] = []
+        self.futures: List = []
+        self.loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+
+        def _runloop():
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_forever()
+        self.thread = threading.Thread(target=_runloop, daemon=True)
+        self.thread.start()
 
     async def execute(self, repo, cmd:str) -> Result:
         try:
@@ -453,39 +470,49 @@ class RepoAsyncHandler:
 
     def perform(self, repo, args):
         cmd = RepoHandler._format_cmd(repo, args)
-        task = asyncio.create_task(self.execute(repo, cmd))
-        self.tasks.append(task)
+        future = asyncio.run_coroutine_threadsafe(
+            self.execute(repo, cmd), self.loop
+        )
+        self.futures.append(future)
 
-    def join(self):
-        results = asyncio.run(asyncio.gather(*self.tasks))
+    def join(self, root:str, verbose:int):
+        cprint('')
+        cprint(f"Waiting for {len(self.futures)} tasks to complete...", 'yellow')
+        cprint("Press Ctrl+C to interrupt and show partial results")
+
+        results = [future.result() for future in self.futures]
+
         for result in results:
             if result.exception is not None or result.code != 0:
                 self.failure.append(result)
             else:
                 self.success.append(result)
 
+        self.print_failure(root, verbose)
+
     def print_failure(self, root:str, verbose:int):
         if not self.failure:
             return
 
-        cprint('Failure:', 'red')
+        cprint('')
+        cprint('The following tasks failed to execute:', 'red')
         for result in self.failure:
             cprint(f'- {os.path.relpath(result.repo.repo.working_dir, root)}', 'yellow')
             if result.exception is not None:
-                cprint(f'  Exception: {result.exception}', 'red')
+                cprint(f'  Exception: {result.exception}')
             else:
-                cprint(f'  Code: {result.code}', 'red')
+                cprint(f'  Code: {result.code}')
 
-                output = lambda buf: (
-                       (verbose >= 2 and buf.splitlines())
-                    or (verbose  and buf.splitlines()[-20:]) 
+                output = lambda buf: "\n".join((
+                    (verbose >= 2 and buf.splitlines())
+                    or (verbose and buf.splitlines()[-20:])
                     or buf.splitlines()[-10:]
-                )
+                ))
 
                 if result.stdout:
-                    cprint(f'  Stdout: {output(result.stdout)}', 'red')
+                    cprint(f'  Stdout: {output(result.stdout)}')
                 if result.stderr:
-                    cprint(f'  Stderr: {output(result.stderr)}', 'red')
+                    cprint(f'  Stderr: {output(result.stderr)}')
 
     def report(self, prefix:str=''):
         if self.success or self.failure:
@@ -590,8 +617,13 @@ Examples:
                                  'bash - open interactive shell\n'
                                  'gui  - open Git GUI\n'
                                  'run  - execute specified command')
-    group_action.add_argument('-j', '--jobs', action='store', default='', 
-                            help='number of parallel jobs for "run" action\n')
+    # group_action.add_argument('-j', '--jobs', action='store', default=0, type=int,
+    #                         help='number of parallel jobs for "run" action\n')
+    group_action.add_argument('-j', '--jobs', nargs='?', const=-1, default=0, type=int,
+                            help='number of parallel jobs for "run" action\n'
+                            '-j (without value): use all available cores (-1)\n'
+                            '-j N: use N parallel jobs\n'
+                            '(default: 0 - no parallel processing)')
     group_action.add_argument('params', nargs=argparse.REMAINDER,
                             help='command to execute (with -a run)\n'
                                  'supports variables:\n'
@@ -634,12 +666,13 @@ Examples:
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
     if args.verbose:
+        cprint(f'> Jobs: {args.jobs}', 'yellow')
         cprint(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'), 'yellow')
         cprint(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'), 'yellow')
 
     ignored = 0
     matched = 0
-    handler = RepoHandler()
+    handler = RepoAsyncHandler() if args.jobs else RepoHandler()
     for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
         def filter(list, name, reverse=False):
             '''
@@ -677,14 +710,17 @@ Examples:
         repo.display(args.directory, args.level)
         handler.perform(repo, args)
 
+    if args.jobs:
+        handler.join(args.directory, args.verbose)
+
     cprint('')
     cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
             'red' if handler.failure else 'white')
 
     if handler.failure:
         cprint('The failed projects are as follows:', 'red')
-        for repo in handler.failure:
-            cprint(' - ' + os.path.relpath(repo.repo.working_dir, args.directory), 'red')
+        for result in handler.failure:
+            cprint(' - ' + os.path.relpath(result.repo.repo.working_dir, args.directory), 'red')
 
 
 def main():
