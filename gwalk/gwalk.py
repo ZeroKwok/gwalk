@@ -601,13 +601,13 @@ Examples:
     # Display options
     group_display = parser.add_argument_group('Display Options')
     group_display.add_argument("-v", "--verbose", action="count", default=0, 
-                               help="enable verbose output")
+                            help="enable verbose output")
     group_display.add_argument('-l', '--level', choices=['none', 'brief', 'normal'],
                              default='brief',
-                             help='set output detail level:\n'
-                                  'none    - show paths only\n'
-                                  'brief   - show single-line status (default)\n'
-                                  'normal  - show git status output\n')
+                            help='set output detail level:\n'
+                                 'none    - show paths only\n'
+                                 'brief   - show single-line status (default)\n'
+                                 'normal  - show git status output\n')
 
     # Action options
     group_action = parser.add_argument_group('Action options')
@@ -617,13 +617,11 @@ Examples:
                                  'bash - open interactive shell\n'
                                  'gui  - open Git GUI\n'
                                  'run  - execute specified command')
-    # group_action.add_argument('-j', '--jobs', action='store', default=0, type=int,
-    #                         help='number of parallel jobs for "run" action\n')
     group_action.add_argument('-j', '--jobs', nargs='?', const=-1, default=0, type=int,
                             help='number of parallel jobs for "run" action\n'
-                            '-j (without value): use all available cores (-1)\n'
-                            '-j N: use N parallel jobs\n'
-                            '(default: 0 - no parallel processing)')
+                                 '-j (without value): use all available cores (-1)\n'
+                                 '-j N: use N parallel jobs(developing)\n'
+                                 '(default: 0 - no parallel processing)')
     group_action.add_argument('params', nargs=argparse.REMAINDER,
                             help='command to execute (with -a run)\n'
                                  'supports variables:\n'
