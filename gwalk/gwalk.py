@@ -417,8 +417,10 @@ class RepoHandler:
         else:
             return ''
 
+import time
 import asyncio
 import threading
+import itertools
 import concurrent.futures
 from typing import List, Dict, Optional, Tuple
 
@@ -433,6 +435,7 @@ class RepoAsyncHandler:
     def __init__(self):
         self.success: List[RepoAsyncHandler.Result] = []
         self.failure: List[RepoAsyncHandler.Result] = []
+        self.aborted: List = []
         self.futures: List = []
         self.loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
 
@@ -473,20 +476,55 @@ class RepoAsyncHandler:
         future = asyncio.run_coroutine_threadsafe(
             self.execute(repo, cmd), self.loop
         )
+        future.repo = repo
         self.futures.append(future)
 
     def join(self, root:str, verbose:int):
         cprint('')
         cprint(f"Waiting for {len(self.futures)} tasks to complete...", 'yellow')
         cprint("Press Ctrl+C to interrupt and show partial results")
+        pending = set(self.futures)
 
-        results = [future.result() for future in self.futures]
+        # 动画帧
+        sigstop = threading.Event()
+        spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+        def _spinner():
+            padding = ' ' * 30
+            while not sigstop.is_set():
+                cprint(f'\r{next(spinner)} {len(pending)} tasks ...', 'yellow', end='')
+                time.sleep(0.1)
+            cprint('\r' + padding, end='')
+        animation = threading.Thread(target=_spinner, daemon=True)
+        animation.start()
 
-        for result in results:
-            if result.exception is not None or result.code != 0:
-                self.failure.append(result)
-            else:
-                self.success.append(result)
+        try:
+            for future in concurrent.futures.as_completed(self.futures, timeout=360):
+                result = future.result()
+                if result.exception is not None or result.code != 0:
+                    self.failure.append(result)
+                else:
+                    self.success.append(result)
+                pending.remove(future)
+
+        except KeyboardInterrupt:
+            sigstop.set()
+            animation.join()
+
+            cprint('')
+            cprint("KeyboardInterrupt", "red")
+            cprint("Following tasks has ben aborted:", "red")
+            for future in pending:
+                cprint(f'- {os.path.relpath(future.repo.working_dir, root)}', 'yellow')
+
+                result = RepoAsyncHandler.Result()
+                result.repo = future.repo
+                result.exception = KeyboardInterrupt()
+                self.aborted.append(result)
+
+        finally:
+            if not sigstop.is_set():
+                sigstop.set()
+                animation.join()
 
         self.print_failure(root, verbose)
 
@@ -495,7 +533,7 @@ class RepoAsyncHandler:
             return
 
         cprint('')
-        cprint('The following tasks failed to execute:', 'red')
+        cprint('Following tasks failed to execute:', 'red')
         for result in self.failure:
             cprint(f'- {os.path.relpath(result.repo.working_dir, root)}', 'yellow')
             if result.exception is not None:
@@ -515,8 +553,16 @@ class RepoAsyncHandler:
                     cprint(f'  Stderr: {output(result.stderr)}')
 
     def report(self, prefix:str=''):
-        if self.success or self.failure:
-            return prefix + f'Run result: success {len(self.success)}, failure {len(self.failure)}'
+        selector = []
+        if self.success:
+            selector.append(f'success {len(self.success)}')
+        if self.failure:
+            selector.append(f'failure {len(self.failure)}')
+        if self.aborted:
+            selector.append(f"aborted {len(self.aborted)}")
+
+        if selector:
+            return prefix + f'Run result: {", ".join(selector)}'
         else:
             return ''
 
@@ -725,7 +771,7 @@ def main():
     try:
         cli()
     except KeyboardInterrupt:
-        pass
+        cprint('\nKeyboardInterrupt', 'red')
 
 
 if __name__ == '__main__':
