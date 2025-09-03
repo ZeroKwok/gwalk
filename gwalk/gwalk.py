@@ -358,11 +358,11 @@ class RepoHandler:
     def _format_cmd(repo, args):
         cmd = ' '.join(args.params)
         if '{ab}' in cmd:
-            cmd = cmd.replace('{ab}', repo.repo.active_branch.name)
+            cmd = cmd.replace('{ab}', repo.active_branch.name)
         if '{ActiveBranch}' in cmd:
-            cmd = cmd.replace('{ActiveBranch}', repo.repo.active_branch.name)
+            cmd = cmd.replace('{ActiveBranch}', repo.active_branch.name)
         if '{RepositoryName}' in cmd:
-            cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.repo.working_dir))
+            cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.working_dir))
         if '{cwd}' in cmd:
             cmd = cmd.replace('{cwd}', args.directory)
         return cmd
@@ -382,23 +382,23 @@ class RepoHandler:
                 cprint(f'> Note that you are running in a new bash...', 'yellow')
                 cprint(f'> * Press "CTRL + D" to exit the bash!', 'yellow')
                 cprint(f'> * Press "CTRL + C, CTRL + D" to abort the {projectName}!', 'yellow')
-                os.chdir(repo.repo.working_dir)
+                os.chdir(repo.working_dir)
                 os.system('bash')
 
             elif args.action == 'gui':
-                os.chdir(repo.repo.working_dir)
+                os.chdir(repo.working_dir)
                 os.system('git gui')
 
             elif args.action == 'run':
                 cmd = self._format_cmd(repo, args)
 
-                os.chdir(repo.repo.working_dir)
+                os.chdir(repo.working_dir)
 
                 result = RepoHandler.Result()
                 result.repo = repo
                 result.code = self.execute(cmd)
                 if args.verbose:
-                    cprint(f'> Execute: {cmd} -> {repo.code}', 'red' if repo.code else 'yellow')
+                    cprint(f'> Execute: "{cmd}" -> {result.code}', 'red' if result.code else 'yellow')
 
                 if result.code == 0:
                     self.success.append(result)
@@ -446,7 +446,7 @@ class RepoAsyncHandler:
         try:
             process = await asyncio.create_subprocess_shell(
                 cmd, 
-                cwd=repo.repo.working_dir,
+                cwd=repo.working_dir,
                 stdout=asyncio.subprocess.PIPE, 
                 stderr=asyncio.subprocess.PIPE)
             stdout, stderr = await process.communicate()
@@ -497,7 +497,7 @@ class RepoAsyncHandler:
         cprint('')
         cprint('The following tasks failed to execute:', 'red')
         for result in self.failure:
-            cprint(f'- {os.path.relpath(result.repo.repo.working_dir, root)}', 'yellow')
+            cprint(f'- {os.path.relpath(result.repo.working_dir, root)}', 'yellow')
             if result.exception is not None:
                 cprint(f'  Exception: {result.exception}')
             else:
@@ -697,18 +697,18 @@ Examples:
             ignored += 1
             continue
 
-        repo = RepoStatus(path)
+        repstat = RepoStatus(path)
         if not (args.filter == 'all' and args.level == 'none'):
-            repo.load()
-        if not repo.match(args.filter):
+            repstat.load()
+        if not repstat.match(args.filter):
             ignored += 1
             if args.verbose:
                 cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
             continue
 
         matched += 1
-        repo.display(args.directory, args.level)
-        handler.perform(repo, args)
+        repstat.display(args.directory, args.level)
+        handler.perform(repstat.repo, args)
 
     if args.jobs:
         handler.join(args.directory, args.verbose)
@@ -720,7 +720,7 @@ Examples:
     if handler.failure:
         cprint('The failed projects are as follows:', 'red')
         for result in handler.failure:
-            cprint(' - ' + os.path.relpath(result.repo.repo.working_dir, args.directory), 'red')
+            cprint(' - ' + os.path.relpath(result.repo.working_dir, args.directory), 'red')
 
 
 def main():
