@@ -432,7 +432,7 @@ class RepoAsyncHandler:
         stderr: str = ""
         exception: Exception = None
 
-    def __init__(self):
+    def __init__(self, jobs: int = -1):
         self.success: List[RepoAsyncHandler.Result] = []
         self.failure: List[RepoAsyncHandler.Result] = []
         self.aborted: List = []
@@ -444,6 +444,9 @@ class RepoAsyncHandler:
             self.loop.run_forever()
         self.thread = threading.Thread(target=_runloop, daemon=True)
         self.thread.start()
+
+        self.jobs = jobs if jobs >= 0 else min(32, (os.cpu_count() or 1) * 2)
+        self.semaphore = threading.BoundedSemaphore(self.jobs)
 
     async def execute(self, repo, cmd:str) -> Result:
         try:
@@ -472,10 +475,12 @@ class RepoAsyncHandler:
             return result
 
     def perform(self, repo, args):
+        self.semaphore.acquire()
         cmd = RepoHandler._format_cmd(repo, args)
         future = asyncio.run_coroutine_threadsafe(
             self.execute(repo, cmd), self.loop
         )
+        future.add_done_callback(lambda f: self.semaphore.release())
         future.repo = repo
         self.futures.append(future)
 
@@ -666,7 +671,7 @@ Examples:
     group_action.add_argument('-j', '--jobs', nargs='?', const=-1, default=0, type=int,
                             help='number of parallel jobs for "run" action\n'
                                  '-j (without value): use all available cores (-1)\n'
-                                 '-j N: use N parallel jobs(developing)\n'
+                                 '-j N: use N parallel jobs\n'
                                  '(default: 0 - no parallel processing)')
     group_action.add_argument('params', nargs=argparse.REMAINDER,
                             help='command to execute (with -a run)\n'
@@ -716,7 +721,7 @@ Examples:
 
     ignored = 0
     matched = 0
-    handler = RepoAsyncHandler() if args.jobs else RepoHandler()
+    handler = RepoAsyncHandler(args.jobs) if args.jobs else RepoHandler()
     for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
         def filter(list, name, reverse=False):
             '''
