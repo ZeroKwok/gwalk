@@ -714,6 +714,11 @@ Examples:
         args.blacklist = ''
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
+
+    if args.jobs and args.action != 'run':
+        cprint(f"WArnow: jobs option is only valid with -a run", "yellow")
+        args.jobs = 0
+
     if args.verbose:
         cprint(f'> Jobs: {args.jobs}', 'yellow')
         cprint(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'), 'yellow')
