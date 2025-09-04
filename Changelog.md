@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.2.5 Beta
+## v0.2.6 Beta
+
+添加 gwalk -j 选项，允许 gwalk -a run 多个任务并发运行, 减少等待时间
+
+## v0.2.5
 
 添加 gapply -D 选项，允许应用后不提示地删除补丁文件
 添加 gapply -j 选项，允许应用后随机等待一小会儿
