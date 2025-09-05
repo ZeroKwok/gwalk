@@ -382,8 +382,10 @@ class RepoHandler:
                 cprint(f'> Note that you are running in a new bash...', 'yellow')
                 cprint(f'> * Press "CTRL + D" to exit the bash!', 'yellow')
                 cprint(f'> * Press "CTRL + C, CTRL + D" to abort the {projectName}!', 'yellow')
+
+                os.environ['PS1'] = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[36m\] (gwalk|{repo.active_branch.name})\[\033[0m\]\n$'
                 os.chdir(repo.working_dir)
-                os.system('bash')
+                os.system('bash --noprofile --norc')
 
             elif args.action == 'gui':
                 os.chdir(repo.working_dir)
