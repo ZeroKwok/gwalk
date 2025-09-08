@@ -448,43 +448,44 @@ class RepoAsyncHandler:
         self.thread.start()
 
         self.jobs = jobs if jobs >= 0 else min(32, (os.cpu_count() or 1) * 2)
-        self.semaphore = threading.BoundedSemaphore(self.jobs)
+        self.semaphore = asyncio.Semaphore(self.jobs)
 
-    async def execute(self, repo, cmd:str) -> Result:
-        try:
-            process = await asyncio.create_subprocess_shell(
-                cmd, 
-                cwd=repo.working_dir,
-                stdout=asyncio.subprocess.PIPE, 
-                stderr=asyncio.subprocess.PIPE)
-            stdout, stderr = await process.communicate()
+    async def execute(self, repo, cmd: str) -> Result:
+        async with self.semaphore:   # 限制并发量
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    cmd,
+                    cwd=repo.working_dir,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
 
-            code = process.returncode
-            if platform.system().lower() != 'windows':
-                code >>= 8
+                code = process.returncode
+                if platform.system().lower() != 'windows':
+                    code >>= 8
 
-            result = RepoAsyncHandler.Result()
-            result.repo = repo
-            result.code = code
-            result.stdout = stdout.decode('utf-8').rstrip('\n')
-            result.stderr = stderr.decode('utf-8').rstrip('\n')
-            return result
+                result = RepoAsyncHandler.Result()
+                result.repo = repo
+                result.code = code
+                result.stdout = stdout.decode('utf-8').rstrip('\n')
+                result.stderr = stderr.decode('utf-8').rstrip('\n')
+                return result
 
-        except Exception as e:
-            result = RepoAsyncHandler.Result()
-            result.repo = repo
-            result.exception = e
-            return result
+            except Exception as e:
+                result = RepoAsyncHandler.Result()
+                result.repo = repo
+                result.exception = e
+                return result
 
     def perform(self, repo, args):
-        self.semaphore.acquire()
         cmd = RepoHandler._format_cmd(repo, args)
         future = asyncio.run_coroutine_threadsafe(
             self.execute(repo, cmd), self.loop
         )
-        future.add_done_callback(lambda f: self.semaphore.release())
         future.repo = repo
         self.futures.append(future)
+        return future
 
     def join(self, root:str, verbose:int):
         cprint('')
