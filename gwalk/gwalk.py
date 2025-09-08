@@ -424,6 +424,7 @@ import asyncio
 import threading
 import itertools
 import concurrent.futures
+from natsort import natsorted
 from typing import List, Dict, Optional, Tuple
 
 class RepoAsyncHandler:
@@ -521,13 +522,17 @@ class RepoAsyncHandler:
             cprint('')
             cprint("KeyboardInterrupt", "red")
             cprint("Following tasks has ben aborted:", "red")
+            
+            display = []
             for future in pending:
-                cprint(f'- {os.path.relpath(future.repo.working_dir, root)}', 'yellow')
+                display.append(future.repo.working_dir)
 
                 result = RepoAsyncHandler.Result()
                 result.repo = future.repo
                 result.exception = KeyboardInterrupt()
                 self.aborted.append(result)
+            for f in natsorted(display):
+                cprint(f'- {os.path.relpath(f, root)}', 'yellow')
 
         finally:
             if not sigstop.is_set():
