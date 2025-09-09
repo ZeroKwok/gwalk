@@ -488,10 +488,11 @@ class RepoAsyncHandler:
         self.futures.append(future)
         return future
 
-    def join(self, root:str, verbose:int):
-        cprint('')
-        cprint(f"Waiting for {len(self.futures)} tasks to complete...", 'yellow')
-        cprint("Press Ctrl+C to interrupt and show partial results")
+    def join(self, root:str, verbose:int, timeout:int=360):
+        if timeout:
+            cprint('')
+            cprint(f"Waiting for {len(self.futures)} tasks to complete...", 'yellow')
+            cprint("Press Ctrl+C to interrupt and show partial results")
         pending = set(self.futures)
 
         # 动画帧
@@ -506,8 +507,29 @@ class RepoAsyncHandler:
         animation = threading.Thread(target=_spinner, daemon=True)
         animation.start()
 
+        # 异常处理
+        def _handler(timeout: bool=False):
+            sigstop.set()
+            animation.join()
+
+            cprint('')
+            cprint("TimeoutError" if timeout else "KeyboardInterrupt", "red")
+            cprint("Following tasks will be abort:", "red")
+
+            display = []
+            for future in pending:
+                display.append(future.repo.working_dir)
+
+                result = RepoAsyncHandler.Result()
+                result.repo = future.repo
+                result.exception = TimeoutError() if timeout else KeyboardInterrupt()
+                self.aborted.append(result)
+            for f in natsorted(display):
+                cprint(f'- {os.path.relpath(f, root)}', 'yellow')
+
+        # 等待任务完成
         try:
-            for future in concurrent.futures.as_completed(self.futures, timeout=360):
+            for future in concurrent.futures.as_completed(self.futures, timeout=timeout):
                 result = future.result()
                 if result.exception is not None or result.code != 0:
                     self.failure.append(result)
@@ -516,29 +538,17 @@ class RepoAsyncHandler:
                 pending.remove(future)
 
         except KeyboardInterrupt:
-            sigstop.set()
-            animation.join()
+            _handler()
 
-            cprint('')
-            cprint("KeyboardInterrupt", "red")
-            cprint("Following tasks has ben aborted:", "red")
-            
-            display = []
-            for future in pending:
-                display.append(future.repo.working_dir)
-
-                result = RepoAsyncHandler.Result()
-                result.repo = future.repo
-                result.exception = KeyboardInterrupt()
-                self.aborted.append(result)
-            for f in natsorted(display):
-                cprint(f'- {os.path.relpath(f, root)}', 'yellow')
+        except TimeoutError:
+            _handler(timeout > 0)
 
         finally:
             if not sigstop.is_set():
                 sigstop.set()
                 animation.join()
 
+        # 失败的任务打印标准流
         self.print_failure(root, verbose)
 
     def print_failure(self, root:str, verbose:int):
@@ -735,42 +745,56 @@ Examples:
     ignored = 0
     matched = 0
     handler = RepoAsyncHandler(args.jobs) if args.jobs else RepoHandler()
-    for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
-        def filter(list, name, reverse=False):
-            '''
-            返回True表示被忽略, 黑名单匹配的项应该忽略, 而白名单匹配的项则反之, 名单未初始化则不参与过滤.
-            matched : reverse 的组合结果如下: 
-                1 : 0 = 1
-                0 : 0 = 0
-                1 : 1 = 0
-                0 : 1 = 1
-            '''
+    try:
+        for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
+            def filter(list, name, reverse=False):
+                '''
+                返回True表示被忽略, 黑名单匹配的项应该忽略, 而白名单匹配的项则反之, 名单未初始化则不参与过滤.
+                matched : reverse 的组合结果如下: 
+                    1 : 0 = 1
+                    0 : 0 = 0
+                    1 : 1 = 0
+                    0 : 1 = 1
+                '''
 
-            if not list:
-                return False
-            matched = list.match(path)
-            if args.verbose:
-                cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
-                if matched ^ reverse:
-                    cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
-            return matched ^ reverse
+                if not list:
+                    return False
+                matched = list.match(path)
+                if args.verbose:
+                    cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
+                    if matched ^ reverse:
+                        cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
+                return matched ^ reverse
 
-        if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist', True):
-            ignored += 1
-            continue
+            if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist', True):
+                ignored += 1
+                continue
 
-        repstat = RepoStatus(path)
-        if not (args.filter == 'all' and args.level == 'none'):
-            repstat.load()
-        if not repstat.match(args.filter):
-            ignored += 1
-            if args.verbose:
-                cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
-            continue
+            repstat = RepoStatus(path)
+            if not (args.filter == 'all' and args.level == 'none'):
+                repstat.load()
+            if not repstat.match(args.filter):
+                ignored += 1
+                if args.verbose:
+                    cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
+                continue
 
-        matched += 1
-        repstat.display(args.directory, args.level)
-        handler.perform(repstat.repo, args)
+            matched += 1
+            repstat.display(args.directory, args.level)
+            handler.perform(repstat.repo, args)
+    except KeyboardInterrupt:
+        if not args.jobs:
+            raise
+
+        # 并发执行时, 需要汇报以完成的任务
+        handler.join(args.directory, args.verbose, timeout=0)
+        cprint('')
+        cprint("Following tasks has ben completed:", 'yellow')
+        for result in handler.success:
+            cprint(f' - {os.path.relpath(result.repo.working_dir, args.directory)}')
+        else:
+            cprint("  nothing")
+        exit(1)
 
     if args.jobs:
         handler.join(args.directory, args.verbose)
