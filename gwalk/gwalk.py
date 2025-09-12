@@ -89,19 +89,16 @@ import shutil
 import argparse
 import platform
 import traceback
-
+import git
+from   termcolor import cprint
 from . import projectName, projectHome, projectVersion, projectAuthor
 
-try:
-    import git
-    from   termcolor import cprint
-except ModuleNotFoundError as e:
-    print(f'{projectName} depends on "GitPython" and "termcolor", use the following command to install them:')
-    print()
-    print('"python -m pip install GitPython termcolor"')
-    exit(1)
-except KeyboardInterrupt:
-    exit(1)
+def RepoName(working_dir:str, root:str):
+    name = os.path.relpath(working_dir, root)
+    if '.' == name:
+        name = f'{os.path.basename(working_dir)}'
+    return name
+
 
 class RepoWalk:
     def __init__(self, directory:str, recursive:bool=False, verbose:int=0):
@@ -311,7 +308,7 @@ class RepoStatus:
 
     def display(self, root:str, level:str='brief'):
         dir = self.repo.working_dir
-        dir = os.path.relpath(self.repo.working_dir, root)
+        dir = RepoName(self.repo.working_dir, root)
 
         if level == 'none':
             cprint(dir)
@@ -525,7 +522,7 @@ class RepoAsyncHandler:
                 result.exception = TimeoutError() if timeout else KeyboardInterrupt()
                 self.aborted.append(result)
             for f in natsorted(display):
-                cprint(f'- {os.path.relpath(f, root)}', 'yellow')
+                cprint(f'- {RepoName(f, root)}', 'yellow')
 
         # 等待任务完成
         try:
@@ -552,13 +549,15 @@ class RepoAsyncHandler:
         self.print_failure(root, verbose)
 
     def print_failure(self, root:str, verbose:int):
-        if not self.failure:
+        failure = [r for r in self.failure if 'KeyboardInterrupt' not in r.stderr]
+        if not failure:
             return
 
         cprint('')
         cprint('Following tasks failed to execute:', 'red')
-        for result in self.failure:
-            cprint(f'- {os.path.relpath(result.repo.working_dir, root)}', 'yellow')
+
+        for result in failure:
+            cprint(f'- {RepoName(result.repo.working_dir, root)}', 'yellow')
             if result.exception is not None:
                 cprint(f'  Exception: {result.exception}')
             else:
@@ -763,7 +762,7 @@ Examples:
                 if args.verbose:
                     cprint(f'> {name}.match({path}): {matched}', 'yellow' if matched else 'white')
                     if matched ^ reverse:
-                        cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {os.path.relpath(path, args.directory)}', 'yellow')
+                        cprint(f'> ignored repo that {"not in" if reverse else "in"} {name}: {RepoName(path, args.directory)}', 'yellow')
                 return matched ^ reverse
 
             if filter(args.blacklist, 'blacklist') or filter(args.whitelist, 'whitelist', True):
@@ -776,7 +775,7 @@ Examples:
             if not repstat.match(args.filter):
                 ignored += 1
                 if args.verbose:
-                    cprint(f'> ignored repo that not match filter "{args.filter}": {os.path.relpath(path, args.directory)}', 'yellow')
+                    cprint(f'> ignored repo that not match filter "{args.filter}": {RepoName(path, args.directory)}', 'yellow')
                 continue
 
             matched += 1
@@ -791,9 +790,9 @@ Examples:
         cprint('')
         cprint("Following tasks has ben completed:", 'yellow')
         for result in handler.success:
-            cprint(f' - {os.path.relpath(result.repo.working_dir, args.directory)}')
+            cprint(f' - {RepoName(result.repo.working_dir, args.directory)}')
         else:
-            cprint("  nothing")
+            cprint("  nothing", end='')
         exit(1)
 
     if args.jobs:
@@ -806,7 +805,7 @@ Examples:
     if handler.failure:
         cprint('The failed projects are as follows:', 'red')
         for result in handler.failure:
-            cprint(' - ' + os.path.relpath(result.repo.working_dir, args.directory), 'red')
+            cprint(' - ' + RepoName(result.repo.working_dir, args.directory), 'red')
 
 
 def main():
