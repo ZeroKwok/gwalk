@@ -85,7 +85,6 @@
 import os
 import re
 import sys
-import shutil
 import argparse
 import platform
 import traceback
@@ -445,7 +444,7 @@ class RepoAsyncHandler:
         self.thread = threading.Thread(target=_runloop, daemon=True)
         self.thread.start()
 
-        self.jobs = jobs if jobs >= 0 else min(32, (os.cpu_count() or 1) * 2)
+        self.jobs = jobs if jobs > 1 else min(32, (os.cpu_count() or 1) * 2)
         self.semaphore = asyncio.Semaphore(self.jobs)
 
     async def execute(self, repo, cmd: str) -> Result:
@@ -685,11 +684,11 @@ Examples:
                                  'bash - open interactive shell\n'
                                  'gui  - open Git GUI\n'
                                  'run  - execute specified command')
-    group_action.add_argument('-j', '--jobs', nargs='?', const=-1, default=0, type=int,
+    group_action.add_argument('-j', '--jobs', nargs='?', const=-1, default=1, type=int,
                             help='number of parallel jobs for "run" action\n'
                                  '-j (without value): use all available cores (-1)\n'
                                  '-j N: use N parallel jobs\n'
-                                 '(default: 0 - no parallel processing)')
+                                 '(default: 1 - no parallel processing)')
     group_action.add_argument('params', nargs=argparse.REMAINDER,
                             help='command to execute (with -a run)\n'
                                  'supports variables:\n'
@@ -732,9 +731,12 @@ Examples:
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
 
+    # 正规化参数 jobs (1 ~ -1)
     if args.jobs and args.action != 'run':
         cprint(f"WArnow: jobs option is only valid with -a run", "yellow")
-        args.jobs = 0
+        args.jobs = 1
+    if args.jobs == 0:
+        args.jobs = 1 
 
     if args.verbose:
         cprint(f'> Jobs: {args.jobs}', 'yellow')
@@ -743,7 +745,7 @@ Examples:
 
     ignored = 0
     matched = 0
-    handler = RepoAsyncHandler(args.jobs) if args.jobs else RepoHandler()
+    handler = RepoHandler() if args.jobs == 1 else RepoAsyncHandler(args.jobs)
     try:
         for path in RepoWalk(args.directory, args.recursive, verbose=args.verbose):
             def filter(list, name, reverse=False):
@@ -782,7 +784,7 @@ Examples:
             repstat.display(args.directory, args.level)
             handler.perform(repstat.repo, args)
     except KeyboardInterrupt:
-        if not args.jobs:
+        if args.jobs == 1:
             raise
 
         # 并发执行时, 需要汇报以完成的任务
@@ -795,11 +797,11 @@ Examples:
             cprint("  nothing", end='')
         exit(1)
 
-    if args.jobs:
+    if args.jobs != 1:
         handler.join(args.directory, args.verbose)
 
     cprint('')
-    cprint(f'Walked {matched+ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
+    cprint(f'Walked {matched + ignored} repo, matched: {matched}, ignored: {ignored}{handler.report("; ")}', 
             'red' if handler.failure else 'white')
 
     if handler.failure:
