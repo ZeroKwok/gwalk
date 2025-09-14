@@ -29,8 +29,8 @@ classifiers = [
 ]
 dependencies = [
     "GitPython",
-    "natsorted",
     "termcolor",
+    "natsort",
 ]
 dynamic = ["version"]
 
