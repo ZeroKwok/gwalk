@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.6 Beta
+## v0.2.6
 
 添加 gwalk -j 选项，允许 gwalk -a run 多个任务并发运行, 减少等待时间
 优化 gwalk -a bahs 交互模式下的命令提示符
