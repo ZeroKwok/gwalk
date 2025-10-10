@@ -748,8 +748,8 @@ Examples:
     args.blacklist = PathFilter(args.blacklist)
 
     # 正规化参数 jobs (1 ~ -1)
-    if args.jobs and args.action != 'run':
-        cprint(f"WArnow: jobs option is only valid with -a run", "yellow")
+    if args.jobs != 1 and args.action != 'run':
+        cprint(f"Warning: jobs option is only valid with -a run", "yellow")
         args.jobs = 1
     if args.jobs == 0:
         args.jobs = 1 
