@@ -226,6 +226,12 @@ class RepoStatus:
     def __bool__(self):
         '''返回True, 表示仓库状态是脏的(dirty)'''
         return bool(self.status)
+
+    def active_branch_name(self):
+        try:
+            return self.repo.active_branch.name
+        except TypeError:
+            return 'HEAD is detached'
     
     def load(self):
         '''
@@ -314,7 +320,7 @@ class RepoStatus:
             return
 
         cprint(dir, 'green', end=' ')
-        cprint(f'({self.repo.active_branch.name})', 'cyan')
+        cprint(f'({self.active_branch_name()})', 'cyan')
 
         if level == 'brief':
             modified = []
@@ -353,10 +359,14 @@ class RepoHandler:
     @staticmethod
     def _format_cmd(repo, args):
         cmd = ' '.join(args.params)
-        if '{ab}' in cmd:
-            cmd = cmd.replace('{ab}', repo.active_branch.name)
-        if '{ActiveBranch}' in cmd:
-            cmd = cmd.replace('{ActiveBranch}', repo.active_branch.name)
+        try:
+            if '{ab}' in cmd:
+                cmd = cmd.replace('{ab}', repo.active_branch.name)
+            if '{ActiveBranch}' in cmd:
+                cmd = cmd.replace('{ActiveBranch}', repo.active_branch.name)
+        except TypeError:
+            raise RuntimeError('Error: do not execute command in detached HEAD state.')
+            
         if '{RepositoryName}' in cmd:
             cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.working_dir))
         if '{cwd}' in cmd:
@@ -378,8 +388,14 @@ class RepoHandler:
                 cprint(f'> Note that you are running in a new bash...', 'yellow')
                 cprint(f'> * Press "CTRL + D" to exit the bash!', 'yellow')
                 cprint(f'> * Press "CTRL + C, CTRL + D" to abort the {projectName}!', 'yellow')
+                
+                try:
+                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[36m\] (gwalk|{repo.active_branch.name})\[\033[0m\]\n$'
+                except TypeError:
+                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[31m\] (gwalk|DETACHED)\[\033[0m\]\n$'
+                    cprint(f'WARNING: HEAD is detached', 'red')
 
-                os.environ['PS1'] = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[36m\] (gwalk|{repo.active_branch.name})\[\033[0m\]\n$'
+                os.environ['PS1'] = title
                 os.chdir(repo.working_dir)
                 os.system('bash --noprofile --norc')
 
