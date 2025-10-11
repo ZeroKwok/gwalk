@@ -390,9 +390,9 @@ class RepoHandler:
                 cprint(f'> * Press "CTRL + C, CTRL + D" to abort the {projectName}!', 'yellow')
                 
                 try:
-                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[36m\] (gwalk|{repo.active_branch.name})\[\033[0m\]\n$'
+                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[36m\] (gwalk|{repo.active_branch.name})\[\033[0m\]\n$ '
                 except TypeError:
-                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[31m\] (gwalk|DETACHED)\[\033[0m\]\n$'
+                    title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[31m\] (gwalk|DETACHED)\[\033[0m\]\n$ '
                     cprint(f'WARNING: HEAD is detached', 'red')
 
                 os.environ['PS1'] = title
