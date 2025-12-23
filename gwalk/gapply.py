@@ -42,6 +42,7 @@ def extract_from_patch(patch_file):
         subject_is_join = False
         newfile_lines = []
         for line in file:
+            line = line.rstrip()
             if 'subject' not in metadata:
                 # Subject: [PATCH] feat(window-state): Move window state management to a new
                 #  module
