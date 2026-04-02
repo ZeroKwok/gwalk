@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.8
+
+修复 unix-like 环境下不正确的处理换行符问题
+优化 bash 终端体验, 不跳过 .bashrc 用户配置
+
 ## v0.2.7
 
 添加 gwalk 对游离状态的支持
