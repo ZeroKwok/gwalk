@@ -85,10 +85,11 @@
 import os
 import re
 import sys
+import git
 import argparse
 import platform
+import tempfile
 import traceback
-import git
 from   termcolor import cprint
 from . import projectName, projectHome, projectVersion, projectAuthor
 
@@ -395,9 +396,20 @@ class RepoHandler:
                     title = rf'\[\033]0;$TITLEPREFIX:$PWD\007\]\n\[\033[32m\]\u@\h \[\033[35m\]$MSYSTEM \[\033[33m\]\w\[\033[31m\] (gwalk|DETACHED)\[\033[0m\]\n$ '
                     cprint(f'WARNING: HEAD is detached', 'red')
 
+                rcfile = None
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.rc', delete=False) as f:
+                    f.write(f"""
+if [ -f ~/.bashrc ]; then
+    source ~/.bashrc
+fi
+export PS1="{title}"
+""")
+                    rcfile = f.name
+
+                command = f'bash --rcfile {rcfile}' if rcfile else 'bash --noprofile --norc'
                 os.environ['PS1'] = title
                 os.chdir(repo.working_dir)
-                os.system('bash --noprofile --norc')
+                os.system(command)
 
             elif args.action == 'gui':
                 os.chdir(repo.working_dir)
