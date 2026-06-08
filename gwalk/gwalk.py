@@ -234,7 +234,13 @@ class RepoStatus:
             return self.repo.active_branch.name
         except TypeError:
             return 'HEAD is detached'
-    
+
+    def describe(self):
+        try:
+            return self.repo.git.describe("--tags", "--dirty")
+        except git.exc.GitCommandError as e:
+            return self.repo.head.commit.hexsha[:7]
+
     def load(self):
         '''
         加载仓库状态
@@ -348,6 +354,7 @@ class RepoStatus:
                     os.system('git status -b --show-stash --untracked-files=all --ignore-submodules=all --ignored')
             finally:
                 os.chdir(lastcwd)
+
 
 class RepoHandler:
     class Result:
