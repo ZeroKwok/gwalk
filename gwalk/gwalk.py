@@ -88,6 +88,7 @@ import sys
 import git
 import argparse
 import platform
+import subprocess
 import tempfile
 import traceback
 from   termcolor import cprint
@@ -642,6 +643,29 @@ class PathFilter:
                 return True
         return False
 
+class CommandFilter:
+    def __init__(self, command:str=None) -> None:
+        self.command = command
+
+    def __bool__(self):
+        return bool(self.command)
+
+    def match(self, repo, verbose:int=0) -> bool:
+        if not self.command:
+            return True
+
+        result = subprocess.run(
+            self.command,
+            cwd=repo.working_dir,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        matched = result.returncode == 0
+        if verbose:
+            cprint(f'> test "{self.command}" in {repo.working_dir}: {result.returncode}', 'yellow' if matched else 'white')
+        return matched
+
 def cli():
     parser = argparse.ArgumentParser(
         description='''Git Repository Walker and Batch Operation Tool
@@ -692,6 +716,10 @@ Examples:
                                  '(overrides blacklist if specified)')
     group_filter.add_argument('--force', action='store_true',
                             help='ignore blacklist filtering')
+    group_filter.add_argument('-t', '--test', action='store', default='',
+                            help='shell command used to test each repository\n'
+                                 'only repositories where the command exits with 0 match\n'
+                                 'example: gwalk -t "git tag | grep -q v3.7.0"')
 
     # Display options
     group_display = parser.add_argument_group('Display Options')
@@ -743,6 +771,7 @@ Examples:
     args.directory = args.directory.strip(' \'"')
     args.blacklist = args.blacklist.strip(' \'"')
     args.whitelist = args.whitelist.strip(' \'"')
+    args.test = args.test.strip(' \'"')
 
     if args.blacklist and not os.path.exists(args.blacklist):
         raise RuntimeError(f'Invalid blacklist: {args.blacklist}')
@@ -758,6 +787,7 @@ Examples:
         args.blacklist = ''
     args.whitelist = PathFilter(args.whitelist)
     args.blacklist = PathFilter(args.blacklist)
+    args.test = CommandFilter(args.test)
 
     # 正规化参数 jobs (1 ~ -1)
     if args.jobs != 1 and args.action != 'run':
@@ -770,6 +800,7 @@ Examples:
         cprint(f'> Jobs: {args.jobs}', 'yellow')
         cprint(f'> Blacklist: ' + (f'Valid {{{args.blacklist.filename}}}' if args.blacklist else 'Invalid'), 'yellow')
         cprint(f'> Whitelist: ' + (f'Valid {{{args.whitelist.filename}}}' if args.whitelist else 'Invalid'), 'yellow')
+        cprint(f'> Test: ' + (f'Valid {{{args.test.command}}}' if args.test else 'Invalid'), 'yellow')
 
     ignored = 0
     matched = 0
@@ -806,6 +837,11 @@ Examples:
                 ignored += 1
                 if args.verbose:
                     cprint(f'> ignored repo that not match filter "{args.filter}": {RepoName(path, args.directory)}', 'yellow')
+                continue
+            if args.test and not args.test.match(repstat.repo, args.verbose):
+                ignored += 1
+                if args.verbose:
+                    cprint(f'> ignored repo that not match test "{args.test.command}": {RepoName(path, args.directory)}', 'yellow')
                 continue
 
             matched += 1
