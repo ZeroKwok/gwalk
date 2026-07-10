@@ -22,6 +22,7 @@ gdeploy --remote NAME [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --remote NAME [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
+gdeploy --commit [-d WORKSPACE] [MANIFEST]
 ```
 
 ## Manifest Format
@@ -46,6 +47,8 @@ Top-level structure:
                 'github': 'https://github.com/example/uiframe.git',
             },
             'branch': 'dev',
+            'commit': '7f4a9f2f8d1f8f6b1b2c3d4e5f60718293a4b5c6',
+            'describe': 'v1.2.0-3-g7f4a9f2',
             'post': 'npm install',
         },
     ],
@@ -57,6 +60,8 @@ Repository fields:
 - `path`: repository directory relative to workspace.
 - `remote`: named remote map. Values may be a string URL or a list of URL fallbacks.
 - `branch`: optional target branch.
+- `commit`: optional target commit ID recorded by scan.
+- `describe`: optional repository description recorded by scan.
 - `post`: optional command or list of commands executed after clone/update.
 
 Disable a repository by commenting it out or removing it.
@@ -79,6 +84,8 @@ For each repository, scan records:
 - `path`: relative path from workspace, using `/` separators.
 - `remote`: Git remotes by name.
 - `branch`: active branch name.
+- `commit`: current `HEAD` commit ID.
+- `describe`: output of `git describe --tags --dirty --always`; empty string if Git cannot describe the repository.
 
 When the scan workspace itself is a Git repository root, the root repository path is written as the workspace directory name instead of `.`. Nested repositories are written under that name.
 
@@ -91,6 +98,12 @@ Nested repo path: FoneToolBackup/com/uiframe
 ```
 
 Detached HEAD repositories keep their `path` and `remote`, but omit `branch` and print a warning.
+
+If `describe` ends with `-dirty`, scan prints a yellow warning:
+
+```text
+Warning: dirty repository: com/uiframe (v1.2.0-3-g7f4a9f2-dirty)
+```
 
 Scan prints each walked repository:
 
@@ -188,6 +201,13 @@ For each repository entry:
    - Run each command with the repository root as working directory.
    - Commands are executed with `shell=True`.
    - Any non-zero command marks `post_failed`, but deployment continues to following repositories.
+
+Commit checkout:
+
+- By default, deploy does not use the manifest `commit` field.
+- With `--commit`, deploy checks out the repository to the manifest `commit` after clone/update.
+- This may leave the repository in detached HEAD state, similar to pinning sub-repository revisions.
+- If `commit` is missing, no commit checkout is performed for that repository.
 
 By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:
 
