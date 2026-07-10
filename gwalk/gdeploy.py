@@ -114,7 +114,16 @@ def scan_workspace(workspace, preferred_remote=None):
 
         item = {
             "path": path,
+            "commit": repo.head.commit.hexsha,
         }
+
+        try:
+            item["describe"] = repo.git.describe("--tags", "--dirty", "--always")
+            if item["describe"].endswith("-dirty"):
+                cprint(f"Warning: dirty repository: {path} ({item['describe']})", "yellow")
+        except git.exc.GitCommandError:
+            item["describe"] = ""
+
         if preferred_remote and preferred_remote in remotes:
             item["remote"] = {preferred_remote: remotes[preferred_remote]}
         elif remotes:
@@ -224,6 +233,12 @@ def checkout_branch(repo, branch):
         cprint(f"Warning: pull failed in {repo.working_dir}: {e}", "yellow", file=sys.stderr)
 
 
+def checkout_commit(repo, commit):
+    if not commit:
+        return
+    repo.git.checkout(commit)
+
+
 def clone_repository(remotes, target, branch):
     target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -296,7 +311,7 @@ def run_post_commands(commands, directory):
     return ok
 
 
-def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False):
+def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False, checkout_to_commit=False):
     manifest = load_manifest(manifest_file)
     summary = {
         "cloned": 0,
@@ -316,6 +331,7 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False)
         target = repository_target(workspace, path, here)
         remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
+        commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
         remotes = select_remotes(remote_value, preferred_remote)
 
@@ -337,6 +353,9 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False)
                     continue
                 repo = clone_repository(remotes, target, branch)
                 summary["cloned"] += 1
+
+            if checkout_to_commit:
+                checkout_commit(repo, commit)
 
             if not run_post_commands(post, target):
                 summary["post_failed"] += 1
@@ -376,6 +395,11 @@ def main():
         action="store_true",
         help="deploy the manifest root repository into the workspace itself",
     )
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="checkout repositories to manifest commit ids after clone/update",
+    )
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
@@ -392,7 +416,7 @@ def main():
     if not os.path.exists(manifest):
         cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
         return 1
-    return deploy_manifest(workspace, manifest, args.remote, args.here)
+    return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit)
 
 
 if __name__ == "__main__":
