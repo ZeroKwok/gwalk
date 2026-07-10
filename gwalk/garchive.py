@@ -122,7 +122,32 @@ def to_archive(path, remote):
     return 0
 
 
-def restore(source, target, remote, branch):
+def restore_here(source, remote, branch):
+    source = os.path.normpath(os.path.abspath(source))
+    repo = repo_from_git_dir(source)
+    if not is_archive_repo(repo, remote):
+        raise RuntimeError(f"Expected a bare mirror repository: {source}")
+    if os.path.basename(source) != ".git":
+        raise RuntimeError("--here restore requires --path to point to a .git directory")
+
+    backup = backup_config(repo.git_dir)
+    set_worktree_config(repo, remote)
+
+    worktree = os.path.dirname(repo.git_dir)
+    if branch:
+        cprint(f"Checkout {branch}", "green")
+        git.Repo(worktree).git.checkout("-f", branch)
+        git.Repo(worktree).git.reset("--hard", branch)
+
+    cprint(f"Restore done: {worktree}", "green")
+    cprint(f"Config backup: {backup}", "green")
+    return 0
+
+
+def restore(source, target, remote, branch, here=False):
+    if here:
+        return restore_here(source, remote, branch)
+
     source = os.path.normpath(os.path.abspath(source))
     repo = repo_from_git_dir(source)
     if not is_archive_repo(repo, remote):
@@ -165,6 +190,12 @@ def main():
     parser.add_argument("--name", help="target normal repository directory for --restore")
     parser.add_argument("--remote", default="origin", help="remote name")
     parser.add_argument("--branch", help="branch to checkout after restore")
+    parser.add_argument(
+        "-H",
+        "--here",
+        action="store_true",
+        help="restore archive .git directory in place",
+    )
 
     args = parser.parse_args()
 
@@ -172,7 +203,7 @@ def main():
         if args.archive:
             return to_archive(args.path, args.remote)
         if args.restore:
-            return restore(args.path, args.name, args.remote, args.branch)
+            return restore(args.path, args.name, args.remote, args.branch, args.here)
     except Exception as e:
         cprint(f"Error: {e}", "red", file=sys.stderr)
         return 1

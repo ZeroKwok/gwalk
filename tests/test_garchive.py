@@ -103,6 +103,39 @@ def test_restore_with_branch_checks_out_worktree(tmp_path, capsys):
     assert "Skip checkout because --branch was not specified" not in output
 
 
+def test_restore_here_updates_config_without_checkout(tmp_path, capsys):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+    (source / "README.md").write_text("changed\n", encoding="utf-8")
+
+    assert garchive.restore(str(source / ".git"), None, "origin", None, here=True) == 0
+    restored = git.Repo(source)
+
+    assert restored.bare == False
+    assert (source / "README.md").read_text(encoding="utf-8") == "changed\n"
+    assert list((source / ".git").glob("config.backup.*"))
+    output = capsys.readouterr().out
+    assert "Checkout" not in output
+
+
+def test_restore_here_with_branch_checks_out_worktree(tmp_path):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+    (source / "README.md").write_text("changed\n", encoding="utf-8")
+
+    garchive.restore(str(source / ".git"), None, "origin", "main", here=True)
+
+    assert (source / "README.md").read_text(encoding="utf-8") == "test\n"
+
+
+def test_restore_here_requires_dot_git_path(tmp_path):
+    source = tmp_path / "SomeDir.git"
+    make_archive_git_dir(source)
+
+    with pytest.raises(RuntimeError, match=r"\.git directory"):
+        garchive.restore(str(source), None, "origin", None, here=True)
+
+
 def test_restore_derives_target_from_dot_git_suffix(tmp_path):
     source = tmp_path / "Project.git"
     make_archive_git_dir(source)
@@ -165,3 +198,22 @@ def test_main_restore_uses_name_option(tmp_path, monkeypatch):
 
     assert garchive.main() == 0
     assert (target / ".git").exists()
+
+
+def test_main_restore_here(tmp_path, monkeypatch):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "garchive",
+            "--restore",
+            "--path",
+            str(source / ".git"),
+            "--here",
+        ],
+    )
+
+    assert garchive.main() == 0
+    assert git.Repo(source).bare == False

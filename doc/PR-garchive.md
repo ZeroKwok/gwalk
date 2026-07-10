@@ -14,9 +14,10 @@ CLI:
 ```bash
 garchive --archive [--path PATH] [--remote origin]
 garchive --restore [--path PATH] [--name TARGET] [--remote origin] [--branch BRANCH]
+garchive --restore --here [--path PATH] [--remote origin] [--branch BRANCH]
 ```
 
-`--path` defaults to the current directory.
+`--path` defaults to the current directory. `--name` only applies to non-in-place restore.
 
 ## To Archive
 
@@ -69,7 +70,7 @@ Before restore modifies config, it backs up the source config:
 config -> config.backup.<YYYYmmddHHMMSS>
 ```
 
-Restore creates or uses an empty target directory, moves the archive Git directory to:
+Default restore creates or uses an empty target directory, moves the archive Git directory to:
 
 ```text
 TARGET/.git
@@ -90,9 +91,19 @@ If `--branch BRANCH` is provided, restore checks out that branch and resets the 
 
 If `--branch` is not provided, restore does not checkout files.
 
+`--here` is the in-place restore mode:
+
+- `--path` must point to an archive `.git` directory, such as `SomeDir/.git`.
+- The Git directory is not moved.
+- The same config backup and config mutation rules apply.
+- If `--branch BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
+- If `--branch` is omitted, existing worktree files are left as-is.
+
 ## Target Rules
 
 If `--name TARGET` is provided, use it.
+
+`--name` is ignored by `--here`; in-place restore always uses the parent directory of the `.git` path.
 
 If `--name` is omitted:
 
