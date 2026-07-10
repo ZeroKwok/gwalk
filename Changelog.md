@@ -5,6 +5,7 @@
 完善 `gwalk`、`gapply`、`gcp`、`gl` 的测试覆盖，补充仓库遍历、状态匹配、过滤器、命令生成、dry-run、失败处理等场景。
 修复 `gcp` 和 `gl` 对 `exit()` 的依赖，改为显式使用 `sys.exit()`。
 修复 `RepoWalk.isRepo()` 在路径不存在时抛出异常的问题，现在返回 `False`。
+优化 Git 子模块的处理
 
 ## v0.3.0
 
