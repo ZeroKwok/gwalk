@@ -107,6 +107,8 @@ def test_scan_workspace_uses_repo_walk(tmp_path):
     assert repositories == [
         {
             "path": "src/demo",
+            "commit": repo.head.commit.hexsha,
+            "describe": repo.git.describe("--tags", "--dirty", "--always"),
             "remote": {
                 "origin": "https://example.com/demo.git",
                 "public": "https://github.com/example/demo.git",
@@ -131,10 +133,25 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
     assert repositories == [
         {
             "path": "FoneToolBackup",
+            "commit": repo.head.commit.hexsha,
+            "describe": repo.git.describe("--tags", "--dirty", "--always"),
             "remote": {"origin": "https://example.com/FoneToolBackup.git"},
             "branch": "dev",
         }
     ]
+
+
+def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    make_repo(repo_path, "main")
+    (repo_path / "README.md").write_text("dirty\n", encoding="utf-8")
+
+    repositories = gdeploy.scan_workspace(str(tmp_path))
+    output = capsys.readouterr()
+
+    assert repositories[0]["describe"].endswith("-dirty")
+    assert "Warning: dirty repository: demo" in output.out
 
 
 def test_select_remotes_defaults_to_origin_then_first_remote():
@@ -178,6 +195,8 @@ def test_merge_repositories_preserves_post_and_unscanned_items():
     scanned = [
         {
             "path": "demo",
+            "commit": "new",
+            "describe": "new",
             "remote": {"origin": "https://example.com/demo.git"},
             "branch": "main",
         }
@@ -188,6 +207,8 @@ def test_merge_repositories_preserves_post_and_unscanned_items():
     assert merged == [
         {
             "path": "demo",
+            "commit": "new",
+            "describe": "new",
             "remote": {"origin": "https://example.com/demo.git"},
             "branch": "main",
             "post": "build",
@@ -221,10 +242,13 @@ def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch,
     repo_path.mkdir()
     repo = make_repo(repo_path, "main")
     repo.create_remote("origin", "https://example.com/demo.git")
+    commit = repo.head.commit.hexsha
+    describe = repo.git.describe("--tags", "--dirty", "--always")
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(
         "{'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
-        "'https://example.com/demo.git'}, 'branch': 'main'}]}\n",
+        f"'https://example.com/demo.git'}}, 'branch': 'main', 'commit': '{commit}', "
+        f"'describe': '{describe}'}}]}}\n",
         encoding="utf-8",
     )
 
@@ -313,6 +337,40 @@ def test_deploy_manifest_can_clone_root_repository_here(tmp_path):
 
     assert gdeploy.deploy_manifest(str(workspace), str(manifest_file), here=True) == 0
     assert (workspace / ".git").exists()
+
+
+def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    repo = make_repo(source, "main")
+    first_commit = repo.head.commit.hexsha
+    (source / "README.md").write_text("updated\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("second")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "commit": first_commit,
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_to_commit=True,
+    ) == 0
+    deployed = git.Repo(workspace / "demo")
+    assert deployed.head.commit.hexsha == first_commit
 
 
 def test_deploy_manifest_fails_for_existing_non_git_directory(tmp_path):
