@@ -19,8 +19,8 @@ CLI:
 gdeploy [-d WORKSPACE] [MANIFEST]
 gdeploy --scan [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --listed [-d WORKSPACE] [MANIFEST]
-gdeploy --remote NAME [-d WORKSPACE] [MANIFEST]
-gdeploy --scan --remote NAME [-d WORKSPACE] [MANIFEST]
+gdeploy --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
+gdeploy --scan --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
 gdeploy --commit [-d WORKSPACE] [MANIFEST]
@@ -137,8 +137,9 @@ This keeps long scans visibly active when a workspace has many nested repositori
 Remote handling in scan mode:
 
 - Without `--remote`, all Git remotes are recorded.
-- With `--remote NAME`, if that remote exists in a repository, only that remote is recorded for that repository.
-- If `--remote NAME` does not exist in a repository, scan records all remotes for that repository.
+- With one or more `--remote NAME` options, the names form a priority list.
+- Scan records only the first preferred remote that exists in each repository.
+- If none of the preferred remote names exist in a repository, scan records all remotes for that repository.
 
 Scan does not infer `post` commands.
 
@@ -183,7 +184,8 @@ Deploy mode chooses a concrete URL from the repository `remote` map.
 Rules:
 
 - With `--remote NAME`, use `remote[NAME]` if it exists.
-- If `--remote NAME` does not exist, use the first remote in the manifest entry.
+- With multiple `--remote NAME` options, use the first matching remote in that priority order.
+- If none of the preferred remote names exist, use the first remote in the manifest entry.
 - Without `--remote`, use `origin` if it exists.
 - Without `--remote` and without `origin`, use the first remote in the manifest entry.
 
@@ -204,6 +206,8 @@ Example:
 Without `--remote`, deploy uses `origin` and tries the internal URL first, then the public URL.
 
 With `--remote github`, deploy uses only the `github` URL.
+
+With `--remote github --remote origin`, deploy uses `github` when available, otherwise `origin` when available.
 
 With `--remote missing`, deploy falls back to the first remote in the manifest entry.
 

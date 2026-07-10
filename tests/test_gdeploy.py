@@ -120,7 +120,7 @@ def test_scan_workspace_uses_repo_walk(tmp_path):
         }
     ]
 
-    assert gdeploy.scan_workspace(str(tmp_path), "public")[0]["remote"] == {
+    assert gdeploy.scan_workspace(str(tmp_path), ["missing", "public"])[0]["remote"] == {
         "public": "https://github.com/example/demo.git"
     }
 
@@ -131,7 +131,7 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
     repo = make_repo(workspace, "dev")
     repo.create_remote("origin", "https://example.com/FoneToolBackup.git")
 
-    repositories = gdeploy.scan_workspace(str(workspace), "origin")
+    repositories = gdeploy.scan_workspace(str(workspace), ["origin"])
 
     assert repositories == [
         {
@@ -200,8 +200,17 @@ def test_select_remotes_defaults_to_origin_then_first_remote():
             "mirror": "https://example.com/mirror.git",
             "origin": "https://example.com/origin.git",
         },
-        "missing",
+        ["missing"],
     ) == ["https://example.com/mirror.git"]
+
+    assert gdeploy.select_remotes(
+        {
+            "mirror": "https://example.com/mirror.git",
+            "github": "https://example.com/github.git",
+            "origin": "https://example.com/origin.git",
+        },
+        ["missing", "github", "origin"],
+    ) == ["https://example.com/github.git"]
 
 
 def test_merge_repositories_preserves_post_and_unscanned_items():

@@ -94,7 +94,8 @@ def replace_variables(value, manifest, repository, workspace):
     return value
 
 
-def scan_workspace(workspace, preferred_remote=None):
+def scan_workspace(workspace, preferred_remotes=None):
+    preferred_remotes = preferred_remotes or []
     repositories = []
     workspace = os.path.normpath(os.path.abspath(workspace))
     root_is_repo = gwalk.RepoWalk.isRepoRoot(workspace)
@@ -142,8 +143,9 @@ def scan_workspace(workspace, preferred_remote=None):
         except git.exc.GitCommandError:
             item["describe"] = ""
 
-        if preferred_remote and preferred_remote in remotes:
-            item["remote"] = {preferred_remote: remotes[preferred_remote]}
+        matched_remote = next((name for name in preferred_remotes if name in remotes), None)
+        if matched_remote:
+            item["remote"] = {matched_remote: remotes[matched_remote]}
         elif remotes:
             item["remote"] = remotes
 
@@ -183,9 +185,9 @@ def merge_repositories(old_repositories, scanned_repositories):
     return sorted(merged, key=lambda item: item["path"].lower())
 
 
-def update_manifest(workspace, manifest_file, preferred_remote=None, listed_only=False):
+def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_only=False):
     old_manifest = load_manifest(manifest_file, missing=True)
-    scanned_repositories = scan_workspace(workspace, preferred_remote)
+    scanned_repositories = scan_workspace(workspace, preferred_remotes)
     if listed_only:
         listed = {
             item.get("path")
@@ -312,11 +314,13 @@ def repository_target(workspace, path, here=False):
     return os.path.normpath(os.path.join(workspace, *parts[1:]))
 
 
-def select_remotes(remote_value, preferred_remote=None):
+def select_remotes(remote_value, preferred_remotes=None):
+    preferred_remotes = preferred_remotes or []
     if isinstance(remote_value, dict):
-        if preferred_remote and preferred_remote in remote_value:
-            values = [remote_value[preferred_remote]]
-        elif not preferred_remote and "origin" in remote_value:
+        matched_remote = next((name for name in preferred_remotes if name in remote_value), None)
+        if matched_remote:
+            values = [remote_value[matched_remote]]
+        elif not preferred_remotes and "origin" in remote_value:
             values = [remote_value["origin"]]
         else:
             values = list(remote_value.values())[:1]
@@ -352,7 +356,7 @@ def run_post_commands(commands, directory):
     return ok
 
 
-def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False, checkout_to_commit=False):
+def deploy_manifest(workspace, manifest_file, preferred_remotes=None, here=False, checkout_to_commit=False):
     manifest = load_manifest(manifest_file)
     summary = {
         "cloned": 0,
@@ -380,7 +384,7 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False,
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
         commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
-        remotes = select_remotes(remote_value, preferred_remote)
+        remotes = select_remotes(remote_value, preferred_remotes)
 
         try:
             if os.path.exists(target) and not is_empty_directory(target):
@@ -441,7 +445,12 @@ def main():
         action="store_true",
         help="with --scan, update only repositories already listed in the manifest",
     )
-    parser.add_argument("--remote", help="preferred remote name")
+    parser.add_argument(
+        "--remote",
+        action="append",
+        default=[],
+        help="preferred remote name; repeat to define priority",
+    )
     parser.add_argument(
         "-H",
         "--here",
