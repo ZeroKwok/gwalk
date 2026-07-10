@@ -183,9 +183,19 @@ def merge_repositories(old_repositories, scanned_repositories):
     return sorted(merged, key=lambda item: item["path"].lower())
 
 
-def update_manifest(workspace, manifest_file, preferred_remote=None):
+def update_manifest(workspace, manifest_file, preferred_remote=None, listed_only=False):
     old_manifest = load_manifest(manifest_file, missing=True)
     scanned_repositories = scan_workspace(workspace, preferred_remote)
+    if listed_only:
+        listed = {
+            item.get("path")
+            for item in old_manifest.get("repositories", [])
+            if isinstance(item, dict) and item.get("path")
+        }
+        scanned_repositories = [
+            item for item in scanned_repositories
+            if item.get("path") in listed
+        ]
     new_manifest = {
         "variables": old_manifest.get("variables", []),
         "repositories": merge_repositories(old_manifest.get("repositories", []), scanned_repositories),
@@ -426,6 +436,11 @@ def main():
         action="store_true",
         help="scan workspace and update manifest after confirmation",
     )
+    parser.add_argument(
+        "--listed",
+        action="store_true",
+        help="with --scan, update only repositories already listed in the manifest",
+    )
     parser.add_argument("--remote", help="preferred remote name")
     parser.add_argument(
         "-H",
@@ -450,7 +465,7 @@ def main():
     manifest = os.path.normpath(os.path.abspath(manifest))
 
     if args.scan:
-        return update_manifest(workspace, manifest, args.remote)
+        return update_manifest(workspace, manifest, args.remote, args.listed)
     if not os.path.exists(manifest):
         cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
         return 1

@@ -18,6 +18,7 @@ CLI:
 ```bash
 gdeploy [-d WORKSPACE] [MANIFEST]
 gdeploy --scan [-d WORKSPACE] [MANIFEST]
+gdeploy --scan --listed [-d WORKSPACE] [MANIFEST]
 gdeploy --remote NAME [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --remote NAME [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
@@ -140,6 +141,13 @@ Remote handling in scan mode:
 - If `--remote NAME` does not exist in a repository, scan records all remotes for that repository.
 
 Scan does not infer `post` commands.
+
+Listed-only scan:
+
+- `gdeploy --scan --listed` scans the workspace but only updates repositories already present in the manifest.
+- New repositories discovered in the workspace are ignored and are not appended.
+- This is useful when the manifest intentionally tracks only a subset of a workspace and you only want to refresh branch, commit, describe, and remote state for that subset.
+- Existing merge behavior still applies for listed repositories, including preserving `post`.
 
 ## Manifest Update Rules
 

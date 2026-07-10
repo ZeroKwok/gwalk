@@ -293,6 +293,45 @@ def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch,
     assert "@@" not in output.out
 
 
+def test_update_manifest_listed_only_does_not_add_new_repositories(tmp_path, monkeypatch):
+    listed = tmp_path / "listed"
+    extra = tmp_path / "extra"
+    listed.mkdir()
+    extra.mkdir()
+    listed_repo = make_repo(listed, "main")
+    listed_repo.create_remote("origin", "https://example.com/listed.git")
+    make_repo(extra, "main")
+
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(
+        gdeploy.render_manifest(
+            {
+                "variables": [],
+                "repositories": [
+                    {
+                        "path": "listed",
+                        "type": "repository",
+                        "remote": {"origin": "https://old.example.com/listed.git"},
+                        "branch": "old",
+                        "post": "build",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file), listed_only=True) == 0
+    manifest = gdeploy.load_manifest(str(manifest_file))
+
+    assert [item["path"] for item in manifest["repositories"]] == ["listed"]
+    assert manifest["repositories"][0]["branch"] == "main"
+    assert manifest["repositories"][0]["commit"] == listed_repo.head.commit.hexsha
+    assert manifest["repositories"][0]["remote"] == {"origin": "https://example.com/listed.git"}
+    assert manifest["repositories"][0]["post"] == "build"
+
+
 def test_deploy_manifest_clones_missing_repository(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
