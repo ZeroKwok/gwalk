@@ -1,0 +1,334 @@
+import ast
+import os
+import sys
+
+import git
+
+from gwalk import gdeploy
+
+
+def make_repo(path, branch="main"):
+    repo = git.Repo.init(path)
+    with repo.config_writer() as config:
+        config.set_value("user", "name", "test")
+        config.set_value("user", "email", "test@example.com")
+    (path / "README.md").write_text("test\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("init")
+    repo.git.branch("-M", branch)
+    return repo
+
+
+def test_replace_variables_supports_manifest_and_builtin_values(tmp_path):
+    manifest = {
+        "variables": [
+            {"name": "Host", "value": "https://example.com"},
+            {"name": "{Branch}", "value": "dev"},
+        ],
+        "repositories": [],
+    }
+    repository = {"path": "libs/demo"}
+
+    assert (
+        gdeploy.replace_variables(
+            "{Host}/{RepositoryName}.git:{RepositoryPath}:{Workspace}",
+            manifest,
+            repository,
+            str(tmp_path),
+        )
+        == f"https://example.com/demo.git:libs/demo:{tmp_path}"
+    )
+    assert gdeploy.replace_variables("{Branch}", manifest, repository, str(tmp_path)) == "dev"
+    assert gdeploy.replace_variables(["{Host}/a.git"], manifest, repository, str(tmp_path)) == [
+        "https://example.com/a.git"
+    ]
+    assert gdeploy.replace_variables(
+        {"origin": "{Host}/{RepositoryName}.git"},
+        manifest,
+        repository,
+        str(tmp_path),
+    ) == {"origin": "https://example.com/demo.git"}
+
+
+def test_render_and_load_manifest_roundtrip(tmp_path):
+    manifest = {
+        "variables": [{"name": "Host", "value": "https://example.com"}],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": "{Host}/{RepositoryName}.git"},
+                "branch": "main",
+                "post": ["echo done"],
+            }
+        ],
+    }
+    filename = tmp_path / "gdeploy.manifest"
+    filename.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.load_manifest(str(filename)) == manifest
+    assert ast.literal_eval(filename.read_text(encoding="utf-8").split("\n", 2)[2]) == manifest
+
+
+def test_render_manifest_normalizes_unnamed_remote_list():
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": ".",
+                "remote": [
+                    "http://example.internal/demo.git",
+                    "https://example.com/demo.git",
+                ],
+            }
+        ],
+    }
+
+    text = gdeploy.render_manifest(manifest)
+    parsed = ast.literal_eval(text.split("\n", 2)[2])
+
+    assert parsed["repositories"][0]["remote"] == {
+        "origin": [
+            "http://example.internal/demo.git",
+            "https://example.com/demo.git",
+        ]
+    }
+    assert "'remote': [" not in text
+
+
+def test_scan_workspace_uses_repo_walk(tmp_path):
+    repo_path = tmp_path / "src" / "demo"
+    repo_path.mkdir(parents=True)
+    repo = make_repo(repo_path, "dev")
+    repo.create_remote("origin", "https://example.com/demo.git")
+    repo.create_remote("public", "https://github.com/example/demo.git")
+
+    repositories = gdeploy.scan_workspace(str(tmp_path))
+
+    assert repositories == [
+        {
+            "path": "src/demo",
+            "remote": {
+                "origin": "https://example.com/demo.git",
+                "public": "https://github.com/example/demo.git",
+            },
+            "branch": "dev",
+        }
+    ]
+
+    assert gdeploy.scan_workspace(str(tmp_path), "public")[0]["remote"] == {
+        "public": "https://github.com/example/demo.git"
+    }
+
+
+def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
+    workspace = tmp_path / "FoneToolBackup"
+    workspace.mkdir()
+    repo = make_repo(workspace, "dev")
+    repo.create_remote("origin", "https://example.com/FoneToolBackup.git")
+
+    repositories = gdeploy.scan_workspace(str(workspace), "origin")
+
+    assert repositories == [
+        {
+            "path": "FoneToolBackup",
+            "remote": {"origin": "https://example.com/FoneToolBackup.git"},
+            "branch": "dev",
+        }
+    ]
+
+
+def test_select_remotes_defaults_to_origin_then_first_remote():
+    assert gdeploy.select_remotes(
+        {
+            "mirror": "https://example.com/mirror.git",
+            "origin": "https://example.com/origin.git",
+        }
+    ) == ["https://example.com/origin.git"]
+
+    assert gdeploy.select_remotes(
+        {
+            "mirror": "https://example.com/mirror.git",
+            "public": "https://example.com/public.git",
+        }
+    ) == ["https://example.com/mirror.git"]
+
+    assert gdeploy.select_remotes(
+        {
+            "mirror": "https://example.com/mirror.git",
+            "origin": "https://example.com/origin.git",
+        },
+        "missing",
+    ) == ["https://example.com/mirror.git"]
+
+
+def test_merge_repositories_preserves_post_and_unscanned_items():
+    old = [
+        {
+            "path": "demo",
+            "remote": {"origin": "{Host}/demo.git"},
+            "branch": "old",
+            "post": "build",
+        },
+        {
+            "path": "manual",
+            "remote": {"origin": "https://example.com/manual.git"},
+            "post": "manual",
+        },
+    ]
+    scanned = [
+        {
+            "path": "demo",
+            "remote": {"origin": "https://example.com/demo.git"},
+            "branch": "main",
+        }
+    ]
+
+    merged = gdeploy.merge_repositories(old, scanned)
+
+    assert merged == [
+        {
+            "path": "demo",
+            "remote": {"origin": "https://example.com/demo.git"},
+            "branch": "main",
+            "post": "build",
+        },
+        {
+            "path": "manual",
+            "remote": {"origin": "https://example.com/manual.git"},
+            "post": "manual",
+        },
+    ]
+
+
+def test_update_manifest_writes_only_after_confirmation(tmp_path, monkeypatch):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    make_repo(repo_path, "main")
+    manifest_file = tmp_path / "gdeploy.manifest"
+
+    monkeypatch.setattr("builtins.input", lambda: "n")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 1
+    assert not manifest_file.exists()
+
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    manifest = gdeploy.load_manifest(str(manifest_file))
+    assert manifest["repositories"][0]["path"] == "demo"
+
+
+def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch, capsys):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path, "main")
+    repo.create_remote("origin", "https://example.com/demo.git")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(
+        "{'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
+        "'https://example.com/demo.git'}, 'branch': 'main'}]}\n",
+        encoding="utf-8",
+    )
+
+    def fail_input():
+        raise AssertionError("input should not be called when manifest has no diff")
+
+    monkeypatch.setattr("builtins.input", fail_input)
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    output = capsys.readouterr()
+
+    assert "Manifest is up to date" in output.out
+    assert "---" not in output.out
+    assert "+++" not in output.out
+    assert "@@" not in output.out
+
+
+def test_deploy_manifest_clones_missing_repository(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": [str(tmp_path / "missing"), str(source)]},
+                "branch": "main",
+                "post": f'"{sys.executable}" -c "from pathlib import Path; Path(\'post.txt\').write_text(\'ok\')"',
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert (workspace / "demo" / ".git").exists()
+    assert (workspace / "demo" / "post.txt").read_text() == "ok"
+    assert git.Repo(workspace / "demo").active_branch.name == "main"
+
+
+def test_deploy_manifest_clones_named_root_repository_by_default(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "deploy"
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "FoneToolBackup",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert (workspace / "FoneToolBackup" / ".git").exists()
+
+
+def test_deploy_manifest_can_clone_root_repository_here(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "FoneToolBackup"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "FoneToolBackup",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file), here=True) == 0
+    assert (workspace / ".git").exists()
+
+
+def test_deploy_manifest_fails_for_existing_non_git_directory(tmp_path):
+    workspace = tmp_path / "workspace"
+    target = workspace / "demo"
+    target.mkdir(parents=True)
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": "https://example.com/demo.git"},
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
