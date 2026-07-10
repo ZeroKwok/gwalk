@@ -24,6 +24,7 @@ gdeploy --scan --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
 gdeploy --commit [-d WORKSPACE] [MANIFEST]
+gdeploy --checkout [-d WORKSPACE] [MANIFEST]
 ```
 
 ## Manifest Format
@@ -43,6 +44,7 @@ Top-level structure:
     'repositories': [
         {
             'path': 'com/uiframe',
+            'mode': 'archive',
             'remote': {
                 'origin': '{Host}/{RepositoryName}.git',
                 'github': 'https://github.com/example/uiframe.git',
@@ -59,6 +61,7 @@ Top-level structure:
 Repository fields:
 
 - `path`: repository directory relative to workspace.
+- `mode`: optional repository layout. Missing means a normal worktree repository. Supported values are `archive`, `mirror`, and `bare`.
 - `remote`: named remote map. Values may be a string URL or a list of URL fallbacks.
 - `branch`: optional target branch.
 - `commit`: optional target commit ID recorded by scan.
@@ -83,6 +86,7 @@ Scan mode uses `gwalk.RepoWalk(workspace, recursive=True)` to discover repositor
 For each repository, scan records:
 
 - `path`: relative path from workspace, using `/` separators.
+- `mode`: omitted for normal worktree repositories; recorded as `archive`, `mirror`, or `bare` for non-worktree layouts.
 - `remote`: Git remotes by name.
 - `branch`: active branch name.
 - `commit`: current `HEAD` commit ID.
@@ -133,6 +137,14 @@ Scan com/uiframe
 ```
 
 This keeps long scans visibly active when a workspace has many nested repositories.
+
+Non-worktree mode detection:
+
+- `mode: 'archive'`: the repository path is a directory containing only `.git`, and that `.git` directory is a bare mirror repository.
+- `mode: 'mirror'`: the repository path itself is a bare repository and the selected remote has `mirror = true`.
+- `mode: 'bare'`: the repository path itself is a bare repository without mirror mode.
+
+If an existing manifest entry has `mode: 'archive'` and the local repository is currently a normal worktree, scan keeps `mode: 'archive'`. This prevents a temporary checkout from changing the user's backup/deploy strategy.
 
 Remote handling in scan mode:
 
@@ -239,6 +251,20 @@ For each repository entry:
    - Run each command with the repository root as working directory.
    - Commands are executed with `shell=True`.
    - Any non-zero command marks `post_failed`, but deployment continues to following repositories.
+
+Repository modes:
+
+- Missing `mode` deploys a normal worktree repository using the rules above.
+- `mode: 'archive'` creates or updates `<target>/.git` with `git clone --mirror` style storage. By default it does not checkout files and does not run `post`.
+- `mode: 'mirror'` creates or updates `<target>` as a bare mirror repository. It does not checkout files and does not run `post`.
+- `mode: 'bare'` creates or updates `<target>` as a bare non-mirror repository. It does not checkout files and does not run `post`.
+
+Archive checkout:
+
+- `--checkout` applies only to `mode: 'archive'`.
+- When an archive repository is still in `<target>/.git` layout, `gdeploy` calls `garchive` to restore it in place, then checks out the requested branch or commit.
+- If `--checkout` is used with `mode: 'mirror'` or `mode: 'bare'`, gdeploy prints a warning and keeps the repository unchanged.
+- `post` commands for archive repositories run only after `--checkout` has produced a normal worktree.
 
 Commit checkout:
 

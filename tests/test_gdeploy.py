@@ -145,6 +145,19 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
     ]
 
 
+def test_scan_bare_workspace_uses_workspace_name_for_root_repo(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+    workspace = tmp_path / "Backup.git"
+    git.Repo.clone_from(str(source), str(workspace), bare=True)
+
+    repositories = gdeploy.scan_workspace(str(workspace))
+
+    assert repositories[0]["path"] == "Backup.git"
+    assert repositories[0]["mode"] == "bare"
+
+
 def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
     repo_path = tmp_path / "demo"
     repo_path.mkdir()
@@ -178,6 +191,49 @@ def test_scan_workspace_records_gitfile_submodule(tmp_path, capsys):
     assert repositories[1]["type"] == "submodule"
     assert repositories[1]["parent"] == "parent"
     assert "Warning: found git submodule: parent/child" in output.out
+
+
+def test_scan_workspace_records_archive_mirror_and_bare_modes(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    git.Repo.clone_from(str(source), str(archive / ".git"), mirror=True)
+    git.Repo.clone_from(str(source), str(tmp_path / "mirror.git"), mirror=True)
+    git.Repo.clone_from(str(source), str(tmp_path / "bare.git"), bare=True)
+
+    repositories = gdeploy.scan_workspace(str(tmp_path))
+    by_path = {item["path"]: item for item in repositories}
+
+    assert by_path["archive"]["mode"] == "archive"
+    assert by_path["mirror.git"]["mode"] == "mirror"
+    assert by_path["bare.git"]["mode"] == "bare"
+
+
+def test_merge_repositories_keeps_archive_mode_after_checkout_scan():
+    old = [
+        {
+            "path": "demo",
+            "mode": "archive",
+            "remote": {"origin": "https://example.com/demo.git"},
+        }
+    ]
+    scanned = [
+        {
+            "path": "demo",
+            "type": "repository",
+            "commit": "new",
+            "describe": "new",
+            "remote": {"origin": "https://example.com/demo.git"},
+            "branch": "main",
+        }
+    ]
+
+    merged = gdeploy.merge_repositories(old, scanned)
+
+    assert merged[0]["mode"] == "archive"
 
 
 def test_select_remotes_defaults_to_origin_then_first_remote():
@@ -447,6 +503,171 @@ def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
     ) == 0
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == first_commit
+
+
+def test_deploy_manifest_clones_archive_without_checkout_or_post(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "backup",
+                "mode": "archive",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "post": f'"{sys.executable}" -c "from pathlib import Path; Path(\'post.txt\').write_text(\'ok\')"',
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    repo = git.Repo(workspace / "backup" / ".git")
+
+    assert repo.bare == True
+    assert gdeploy.bool_config(repo, 'remote "origin"', "mirror") == True
+    assert not (workspace / "backup" / "README.md").exists()
+    assert not (workspace / "backup" / "post.txt").exists()
+
+
+def test_deploy_manifest_checkouts_archive_and_runs_post(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "backup",
+                "mode": "archive",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "post": f'"{sys.executable}" -c "from pathlib import Path; Path(\'post.txt\').write_text(\'ok\')"',
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_archive=True,
+    ) == 0
+
+    assert git.Repo(workspace / "backup").bare == False
+    assert (workspace / "backup" / "README.md").read_text(encoding="utf-8") == "test\n"
+    assert (workspace / "backup" / "post.txt").read_text() == "ok"
+
+
+def test_deploy_manifest_checkouts_archive_to_commit(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    repo = make_repo(source, "main")
+    first_commit = repo.head.commit.hexsha
+    (source / "README.md").write_text("updated\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("second")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "backup",
+                "mode": "archive",
+                "remote": {"origin": str(source)},
+                "commit": first_commit,
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_to_commit=True,
+        checkout_archive=True,
+    ) == 0
+
+    assert git.Repo(workspace / "backup").head.commit.hexsha == first_commit
+
+
+def test_deploy_manifest_clones_mirror_and_bare_modes(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "mirror.git",
+                "mode": "mirror",
+                "remote": {"origin": str(source)},
+            },
+            {
+                "path": "bare.git",
+                "mode": "bare",
+                "remote": {"origin": str(source)},
+            },
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    mirror = git.Repo(workspace / "mirror.git")
+    bare = git.Repo(workspace / "bare.git")
+
+    assert mirror.bare == True
+    assert bare.bare == True
+    assert gdeploy.bool_config(mirror, 'remote "origin"', "mirror") == True
+    assert gdeploy.bool_config(bare, 'remote "origin"', "mirror") == False
+
+
+def test_deploy_manifest_skips_checkout_for_mirror_and_bare(tmp_path, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "mirror.git",
+                "mode": "mirror",
+                "remote": {"origin": str(source)},
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_archive=True,
+    ) == 0
+    output = capsys.readouterr()
+
+    assert "Skip checkout for mirror repository: mirror.git" in output.out
+    assert git.Repo(workspace / "mirror.git").bare == True
 
 
 def test_deploy_manifest_skips_submodule_entries(tmp_path, capsys):

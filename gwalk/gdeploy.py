@@ -17,6 +17,7 @@ import sys
 import git
 from termcolor import cprint
 
+from . import garchive
 from . import gwalk
 
 
@@ -30,6 +31,62 @@ def normalize_manifest(manifest):
             if isinstance(remote, str) or isinstance(remote, list):
                 repository["remote"] = {"origin": remote}
     return manifest
+
+
+def bool_config(repo, section, option, default=False):
+    reader = repo.config_reader()
+    try:
+        return reader.get_value(section, option) in (True, "true", "True", "1", 1)
+    except Exception:
+        return default
+
+
+def is_bare_repository_path(path):
+    try:
+        return git.Repo(path).bare
+    except Exception:
+        return False
+
+
+def is_mirror_repository(repo, remote_name=None):
+    if not repo.bare:
+        return False
+    if remote_name:
+        return bool_config(repo, f'remote "{remote_name}"', "mirror", False)
+    for remote in repo.remotes:
+        if bool_config(repo, f'remote "{remote.name}"', "mirror", False):
+            return True
+    return False
+
+
+def archive_git_dir(path):
+    return os.path.join(path, ".git")
+
+
+def is_archive_directory(path, remote_name=None):
+    if not os.path.isdir(path):
+        return False
+    if sorted(os.listdir(path)) != [".git"]:
+        return False
+    git_dir = archive_git_dir(path)
+    if not os.path.isdir(git_dir):
+        return False
+    try:
+        repo = git.Repo(git_dir)
+    except Exception:
+        return False
+    return is_mirror_repository(repo, remote_name)
+
+
+def repository_mode(repo, directory, repo_type, preferred_remotes=None):
+    if repo_type == 2:
+        return "submodule"
+    if is_archive_directory(directory, selected_remote_name(repo, preferred_remotes)):
+        return "archive"
+    if repo.bare:
+        matched_remote = selected_remote_name(repo, preferred_remotes)
+        return "mirror" if is_mirror_repository(repo, matched_remote) else "bare"
+    return "worktree"
 
 
 def load_manifest(filename, missing=False):
@@ -94,24 +151,89 @@ def replace_variables(value, manifest, repository, workspace):
     return value
 
 
+def selected_remote_name(repo, preferred_remotes=None):
+    preferred_remotes = preferred_remotes or []
+    remote_names = [remote.name for remote in repo.remotes]
+    matched = next((name for name in preferred_remotes if name in remote_names), None)
+    if matched:
+        return matched
+    if not preferred_remotes and "origin" in remote_names:
+        return "origin"
+    return remote_names[0] if remote_names else None
+
+
+def repository_relative_path(repo, directory, workspace, root_is_repo, root_name):
+    if repo.bare:
+        path = os.path.relpath(directory, workspace).replace("\\", "/")
+    else:
+        path = os.path.relpath(repo.working_dir, workspace).replace("\\", "/")
+    if root_is_repo:
+        path = root_name if path == "." else f"{root_name}/{path}"
+    return path
+
+
+def scan_bare_repository_dirs(workspace):
+    for root, dirs, _ in os.walk(workspace):
+        if os.path.basename(root) == ".git":
+            dirs[:] = []
+            continue
+        if is_bare_repository_path(root):
+            yield root
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if d not in [".git", ".vs", ".vscode"]]
+
+
+def describe_repository(repo):
+    try:
+        return repo.git.describe("--tags", "--dirty", "--always")
+    except git.exc.GitCommandError:
+        return ""
+
+
+def active_branch_name(repo):
+    try:
+        return repo.active_branch.name
+    except TypeError:
+        return ""
+
+
 def scan_workspace(workspace, preferred_remotes=None):
     preferred_remotes = preferred_remotes or []
     repositories = []
     workspace = os.path.normpath(os.path.abspath(workspace))
-    root_is_repo = gwalk.RepoWalk.isRepoRoot(workspace)
+    root_is_repo = (
+        gwalk.RepoWalk.isRepoRoot(workspace)
+        or is_bare_repository_path(workspace)
+        or is_archive_directory(workspace)
+    )
     root_name = os.path.basename(workspace)
     normal_paths = []
+    directories = []
+    seen_directories = set()
     for directory in gwalk.RepoWalk(workspace, recursive=True):
+        directory = os.path.normpath(os.path.abspath(directory))
+        if directory not in seen_directories:
+            directories.append(directory)
+            seen_directories.add(directory)
+    for directory in scan_bare_repository_dirs(workspace):
+        directory = os.path.normpath(os.path.abspath(directory))
+        if directory not in seen_directories:
+            directories.append(directory)
+            seen_directories.add(directory)
+
+    for directory in directories:
         for _, dirs, files in os.walk(directory):
             repo_type = gwalk.RepoWalk.repoTypeByFiles(dirs, files)
             break
         else:
             repo_type = 0
 
-        repo = git.Repo(directory)
-        path = os.path.relpath(repo.working_dir, workspace).replace("\\", "/")
-        if root_is_repo:
-            path = root_name if path == "." else f"{root_name}/{path}"
+        if is_archive_directory(directory):
+            repo = git.Repo(archive_git_dir(directory))
+        else:
+            repo = git.Repo(directory)
+        path = repository_relative_path(repo, directory, workspace, root_is_repo, root_name)
         cprint(f"Scan {path}", "white")
 
         remotes = {}
@@ -120,12 +242,16 @@ def scan_workspace(workspace, preferred_remotes=None):
             if urls:
                 remotes[remote.name] = urls[0] if len(urls) == 1 else urls
 
+        mode = repository_mode(repo, directory, repo_type, preferred_remotes)
         item = {
             "path": path,
-            "type": "submodule" if repo_type == 2 else "repository",
+            "type": "submodule" if mode == "submodule" else "repository",
             "commit": repo.head.commit.hexsha,
         }
-        if repo_type == 2:
+        if mode not in ["worktree", "submodule"]:
+            item["mode"] = mode
+
+        if mode == "submodule":
             parent = ""
             for candidate in reversed(normal_paths):
                 if path.startswith(candidate + "/"):
@@ -136,12 +262,9 @@ def scan_workspace(workspace, preferred_remotes=None):
         else:
             normal_paths.append(path)
 
-        try:
-            item["describe"] = repo.git.describe("--tags", "--dirty", "--always")
-            if item["describe"].endswith("-dirty"):
-                cprint(f"Warning: dirty repository: {path} ({item['describe']})", "yellow")
-        except git.exc.GitCommandError:
-            item["describe"] = ""
+        item["describe"] = describe_repository(repo)
+        if item["describe"].endswith("-dirty"):
+            cprint(f"Warning: dirty repository: {path} ({item['describe']})", "yellow")
 
         matched_remote = next((name for name in preferred_remotes if name in remotes), None)
         if matched_remote:
@@ -149,9 +272,10 @@ def scan_workspace(workspace, preferred_remotes=None):
         elif remotes:
             item["remote"] = remotes
 
-        try:
-            item["branch"] = repo.active_branch.name
-        except TypeError:
+        branch = active_branch_name(repo)
+        if branch:
+            item["branch"] = branch
+        elif not repo.bare:
             cprint(f"Warning: skip detached branch for {item['path']}", "yellow", file=sys.stderr)
 
         repositories.append(item)
@@ -169,9 +293,12 @@ def merge_repositories(old_repositories, scanned_repositories):
         if path in scanned_by_path:
             item = dict(old)
             post = item.get("post")
+            mode = item.get("mode")
             item.update(scanned_by_path[path])
             if post is not None:
                 item["post"] = post
+            if mode == "archive" and scanned_by_path[path].get("mode") in [None, "worktree"]:
+                item["mode"] = mode
             merged.append(item)
             seen.add(path)
         elif path:
@@ -315,15 +442,25 @@ def repository_target(workspace, path, here=False):
 
 
 def select_remotes(remote_value, preferred_remotes=None):
+    _, remotes = select_remote_entry(remote_value, preferred_remotes)
+    return remotes
+
+
+def select_remote_entry(remote_value, preferred_remotes=None):
     preferred_remotes = preferred_remotes or []
+    name = None
     if isinstance(remote_value, dict):
         matched_remote = next((name for name in preferred_remotes if name in remote_value), None)
         if matched_remote:
+            name = matched_remote
             values = [remote_value[matched_remote]]
         elif not preferred_remotes and "origin" in remote_value:
+            name = "origin"
             values = [remote_value["origin"]]
         else:
-            values = list(remote_value.values())[:1]
+            items = list(remote_value.items())[:1]
+            name = items[0][0] if items else None
+            values = [items[0][1]] if items else []
     elif isinstance(remote_value, list):
         values = remote_value
     elif remote_value:
@@ -337,7 +474,7 @@ def select_remotes(remote_value, preferred_remotes=None):
             remotes.extend(value)
         elif value:
             remotes.append(value)
-    return remotes
+    return name, remotes
 
 
 def run_post_commands(commands, directory):
@@ -356,7 +493,58 @@ def run_post_commands(commands, directory):
     return ok
 
 
-def deploy_manifest(workspace, manifest_file, preferred_remotes=None, here=False, checkout_to_commit=False):
+def clone_mode_repository(mode, remotes, target):
+    target_existed = os.path.exists(target)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    if mode == "archive":
+        os.makedirs(target, exist_ok=True)
+        clone_target = archive_git_dir(target)
+        clone_args = {"mirror": True}
+    elif mode == "mirror":
+        clone_target = target
+        clone_args = {"mirror": True}
+    elif mode == "bare":
+        clone_target = target
+        clone_args = {"bare": True}
+    else:
+        raise RuntimeError(f"Unsupported repository mode: {mode}")
+
+    last_error = None
+    for remote in remotes:
+        try:
+            cprint(f"Clone {target} from {remote} ({mode})", "green")
+            return git.Repo.clone_from(remote, clone_target, **clone_args)
+        except Exception as e:
+            last_error = e
+            cprint(f"Clone failed from {remote}: {e}", "red", file=sys.stderr)
+            if not target_existed and os.path.exists(target):
+                shutil.rmtree(target)
+            if mode == "archive":
+                os.makedirs(target, exist_ok=True)
+    raise last_error
+
+
+def update_bare_like_repository(repo, target):
+    cprint(f"Update {target}", "green")
+    repo.git.remote("update", "--prune")
+
+
+def ensure_checkout_target(repository, branch, commit, checkout_to_commit):
+    if branch or (checkout_to_commit and commit):
+        return
+    raise RuntimeError(
+        f"Archive repository needs branch or --commit with commit to checkout: {repository['path']}"
+    )
+
+
+def deploy_manifest(
+    workspace,
+    manifest_file,
+    preferred_remotes=None,
+    here=False,
+    checkout_to_commit=False,
+    checkout_archive=False,
+):
     manifest = load_manifest(manifest_file)
     summary = {
         "cloned": 0,
@@ -384,9 +572,66 @@ def deploy_manifest(workspace, manifest_file, preferred_remotes=None, here=False
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
         commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
-        remotes = select_remotes(remote_value, preferred_remotes)
+        remote_name, remotes = select_remote_entry(remote_value, preferred_remotes)
+        mode = repository.get("mode") or "worktree"
+        should_run_post = mode == "worktree"
 
         try:
+            if mode in ["archive", "mirror", "bare"]:
+                if checkout_archive and mode != "archive":
+                    cprint(f"Skip checkout for {mode} repository: {path}", "yellow")
+
+                if os.path.exists(target) and not is_empty_directory(target):
+                    if mode == "archive" and is_archive_directory(target, remote_name):
+                        repo = git.Repo(archive_git_dir(target))
+                        update_bare_like_repository(repo, target)
+                        summary["updated"] += 1
+                    elif mode in ["mirror", "bare"] and is_bare_repository_path(target):
+                        repo = git.Repo(target)
+                        if mode == "mirror" and not is_mirror_repository(repo, remote_name):
+                            raise RuntimeError(f"Expected a mirror repository: {target}")
+                        if mode == "bare" and is_mirror_repository(repo, remote_name):
+                            raise RuntimeError(f"Expected a bare non-mirror repository: {target}")
+                        update_bare_like_repository(repo, target)
+                        summary["updated"] += 1
+                    elif mode == "archive" and gwalk.RepoWalk.isRepoRoot(target):
+                        cprint(f"Update {target}", "green")
+                        repo = git.Repo(target)
+                        checkout_branch(repo, branch)
+                        update_submodules(repo)
+                        summary["updated"] += 1
+                        should_run_post = checkout_archive
+                    else:
+                        cprint(f"Skip non-{mode} directory: {target}", "red", file=sys.stderr)
+                        summary["failed"] += 1
+                        continue
+                else:
+                    if not remotes:
+                        cprint(f"No remote for missing repository: {path}", "red", file=sys.stderr)
+                        summary["failed"] += 1
+                        continue
+                    repo = clone_mode_repository(mode, remotes, target)
+                    summary["cloned"] += 1
+
+                if mode == "archive" and checkout_archive:
+                    ensure_checkout_target(repository, branch, commit, checkout_to_commit)
+                    if is_archive_directory(target, remote_name):
+                        garchive.restore(archive_git_dir(target), None, remote_name or "origin", branch, here=True)
+                    repo = git.Repo(target)
+                    if checkout_to_commit:
+                        checkout_commit(repo, commit)
+                    update_submodules(repo)
+                    should_run_post = True
+                elif checkout_to_commit and mode == "worktree":
+                    checkout_commit(repo, commit)
+
+                if should_run_post and not run_post_commands(post, target):
+                    summary["post_failed"] += 1
+                continue
+
+            if mode != "worktree":
+                raise RuntimeError(f"Unsupported repository mode: {mode}")
+
             if os.path.exists(target) and not is_empty_directory(target):
                 if not gwalk.RepoWalk.isRepoRoot(target):
                     cprint(f"Skip non-git directory: {target}", "red", file=sys.stderr)
@@ -409,7 +654,7 @@ def deploy_manifest(workspace, manifest_file, preferred_remotes=None, here=False
             if checkout_to_commit:
                 checkout_commit(repo, commit)
 
-            if not run_post_commands(post, target):
+            if should_run_post and not run_post_commands(post, target):
                 summary["post_failed"] += 1
 
         except Exception as e:
@@ -462,6 +707,11 @@ def main():
         action="store_true",
         help="checkout repositories to manifest commit ids after clone/update",
     )
+    parser.add_argument(
+        "--checkout",
+        action="store_true",
+        help="checkout archive repositories into normal worktrees",
+    )
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
@@ -478,7 +728,7 @@ def main():
     if not os.path.exists(manifest):
         cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
         return 1
-    return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit)
+    return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit, args.checkout)
 
 
 if __name__ == "__main__":
