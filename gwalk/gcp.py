@@ -27,6 +27,7 @@
 #   -n,--dry-run 仅显示执行命令，而不做任何改变
 
 import os
+import sys
 import argparse
 from gwalk import gwalk
 
@@ -87,11 +88,11 @@ Examples:
 
       if not gwalk.RepoWalk.isRepo(os.getcwd()):
          gwalk.cprint(f'This is not an valid git repository.', 'red')
-         exit(1)
+         sys.exit(1)
 
       if not args.ignore and not gwalk.RepoWalk.isRepoRoot(os.getcwd()):
          gwalk.cprint(f'This directory is not the root of the git repository; ignore this with the -i option.', 'yellow')
-         exit(1)
+         sys.exit(1)
 
       repo = gwalk.RepoStatus(os.getcwd()).load()
 
@@ -101,11 +102,11 @@ Examples:
       if args.push:
          for r in repo.repo.remotes:
             execute(f'git push {r.name} {args.src}', args.dry_run)
-         exit(0)
+         sys.exit(0)
 
       if repo.match('clean'):
          gwalk.cprint(f'The git repository is clean.', 'green')
-         exit(0)
+         sys.exit(0)
       execute('git status -s --untracked-files=normal')
 
       if repo.match('dirty' if args.all else 'modified'):
@@ -116,9 +117,9 @@ Examples:
             execute(f'git commit', args.dry_run)
          for r in repo.repo.remotes:
             execute(f'git push {r.name} {args.src}', args.dry_run)
-      exit(0)
+      sys.exit(0)
    except ResultError as e:
-      exit(e.ecode)
+      sys.exit(e.ecode)
 
 
 if __name__ == '__main__':

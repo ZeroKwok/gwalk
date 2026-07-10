@@ -8,6 +8,7 @@
 # file that was distributed with this source code.
 
 import os
+import sys
 import argparse
 from gwalk import gwalk
 
@@ -30,7 +31,7 @@ This tool helps streamline common Git operations by:
 
     if not gwalk.RepoWalk.isRepo(os.getcwd()):
         gwalk.cprint(f'This is not an valid git repository.', 'red')
-        exit(1)
+        sys.exit(1)
 
     repo   = gwalk.git.Repo(os.getcwd(), search_parent_directories=True)
     branch = repo.active_branch.name
@@ -53,7 +54,7 @@ This tool helps streamline common Git operations by:
     
     cmd = f'git pull {remote} {branch} {rebase}'
     gwalk.cprint(f'> {cmd}', 'green')
-    exit(gwalk.RepoHandler.execute(cmd))
+    sys.exit(gwalk.RepoHandler.execute(cmd))
 
 
 if __name__ == '__main__':

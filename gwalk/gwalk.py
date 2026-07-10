@@ -144,7 +144,7 @@ class RepoWalk:
     def isRepo(directory) -> int:
         try:
             repo = git.Repo(directory, search_parent_directories=True)
-        except git.exc.InvalidGitRepositoryError:
+        except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
             return False
         if repo.bare:
             return False

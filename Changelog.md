@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1
+
+完善 `gwalk`、`gapply`、`gcp`、`gl` 的测试覆盖，补充仓库遍历、状态匹配、过滤器、命令生成、dry-run、失败处理等场景。
+修复 `gcp` 和 `gl` 对 `exit()` 的依赖，改为显式使用 `sys.exit()`。
+修复 `RepoWalk.isRepo()` 在路径不存在时抛出异常的问题，现在返回 `False`。
+
 ## v0.3.0
 
 重构 `gdeploy` 为基于 manifest 的工作空间部署工具。
