@@ -166,17 +166,20 @@ def update_manifest(workspace, manifest_file, preferred_remote=None):
 
     old = []
     if os.path.exists(manifest_file):
-        with open(manifest_file, "r", encoding="utf-8") as f:
-            old = [line.rstrip("\n") for line in f.readlines()]
+        old = render_manifest(old_manifest).splitlines()
     new = render_manifest(new_manifest).splitlines()
 
-    diff = difflib.unified_diff(
+    diff = list(difflib.unified_diff(
         old,
         new,
         fromfile=manifest_file + " (old)",
         tofile=manifest_file + " (new)",
         lineterm="",
-    )
+    ))
+
+    if not diff:
+        cprint(f"Manifest is up to date: {manifest_file}", "green")
+        return 0
 
     print("")
     for line in diff:
