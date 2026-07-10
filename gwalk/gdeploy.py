@@ -56,7 +56,7 @@ def render_manifest(manifest):
     manifest = normalize_manifest(manifest)
     body = pprint.pformat(
         manifest,
-        indent=4,
+        indent=1,
         width=100,
         compact=False,
         sort_dicts=False,
