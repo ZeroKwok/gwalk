@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0
+
+重构 `gdeploy` 为基于 manifest 的工作空间部署工具。
+添加 `gdeploy --scan`，支持扫描工作空间并合并更新 `gdeploy.manifest`，写入前显示规范化后的差异并确认。
+添加 `gdeploy` 命名 remote、变量替换、部署后 `post` 命令、`-H/--here` 原地部署、`--remote` 远程选择、`--commit` 固定提交部署。
+扫描 manifest 时记录仓库 `commit` 和 `describe`，并对 dirty 仓库输出警告。
+添加 `gdeploy`、`gapply`、`gwalk`、`gcp`、`gl` 的 PR 规则文档。
+
 ## v0.2.9
 
 添加 `gwalk -t/--test <cmd>` 过滤选项。
