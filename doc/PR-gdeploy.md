@@ -123,7 +123,7 @@ Merge behavior:
 
 Because scan writes real Git remote URLs and branch names, a previously variable-based `remote` or `branch` may be overwritten. This is intentional. `post` is preserved because it cannot be discovered from Git state.
 
-Before writing, scan mode renders the new manifest and prints a unified diff:
+Before writing, scan mode renders both the old manifest and the new manifest with the same formatter, then prints a unified diff:
 
 ```text
 --- gdeploy.manifest (old)
@@ -132,6 +132,8 @@ Before writing, scan mode renders the new manifest and prints a unified diff:
 ```
 
 Only input `y` writes the file. Any other input cancels and returns non-zero.
+
+This means pure formatting differences in the existing manifest, such as indentation, wrapping, or extra spaces, are ignored by the diff. The diff is intended to show manifest data changes, not formatting churn.
 
 ## Remote Selection During Deploy
 
