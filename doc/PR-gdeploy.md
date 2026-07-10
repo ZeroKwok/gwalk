@@ -20,6 +20,8 @@ gdeploy [-d WORKSPACE] [MANIFEST]
 gdeploy --scan [-d WORKSPACE] [MANIFEST]
 gdeploy --remote NAME [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --remote NAME [-d WORKSPACE] [MANIFEST]
+gdeploy -H [-d WORKSPACE] [MANIFEST]
+gdeploy --here [-d WORKSPACE] [MANIFEST]
 ```
 
 ## Manifest Format
@@ -77,6 +79,16 @@ For each repository, scan records:
 - `path`: relative path from workspace, using `/` separators.
 - `remote`: Git remotes by name.
 - `branch`: active branch name.
+
+When the scan workspace itself is a Git repository root, the root repository path is written as the workspace directory name instead of `.`. Nested repositories are written under that name.
+
+Example:
+
+```text
+Workspace: H:\Projects\FoneToolBackup
+Root repo path: FoneToolBackup
+Nested repo path: FoneToolBackup/com/uiframe
+```
 
 Detached HEAD repositories keep their `path` and `remote`, but omit `branch` and print a warning.
 
@@ -163,14 +175,36 @@ For each repository entry:
    - Create the parent directory.
    - Clone from selected remote URLs in order.
    - If a clone attempt fails and leaves a partial target directory, remove it before trying the next URL.
-4. If target exists:
+4. If target exists and is an empty directory:
+   - Clone into that empty directory.
+   - This supports users who create the deployment directory before running `gdeploy`.
+5. If target exists and is not empty:
    - It must be a Git repository root.
    - Non-Git directories are not overwritten and count as failures.
    - Run fetch, checkout branch, and fast-forward pull.
-5. If `post` exists:
+6. If `post` exists:
    - Run each command with the repository root as working directory.
    - Commands are executed with `shell=True`.
    - Any non-zero command marks `post_failed`, but deployment continues to following repositories.
+
+By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:
+
+```text
+Workspace: I:\Projects
+Path:      FoneToolBackup
+Target:    I:\Projects\FoneToolBackup
+```
+
+With `-H` or `--here`, the first path component is mapped to the workspace itself:
+
+```text
+Workspace: I:\Projects\FoneToolBackup
+Path:      FoneToolBackup
+Target:    I:\Projects\FoneToolBackup
+
+Path:      FoneToolBackup/com/uiframe
+Target:    I:\Projects\FoneToolBackup\com\uiframe
+```
 
 Branch handling:
 

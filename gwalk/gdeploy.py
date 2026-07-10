@@ -96,9 +96,14 @@ def replace_variables(value, manifest, repository, workspace):
 
 def scan_workspace(workspace, preferred_remote=None):
     repositories = []
+    workspace = os.path.normpath(os.path.abspath(workspace))
+    root_is_repo = gwalk.RepoWalk.isRepoRoot(workspace)
+    root_name = os.path.basename(workspace)
     for directory in gwalk.RepoWalk(workspace, recursive=True):
         repo = git.Repo(directory)
         path = os.path.relpath(repo.working_dir, workspace).replace("\\", "/")
+        if root_is_repo:
+            path = root_name if path == "." else f"{root_name}/{path}"
         cprint(f"Scan {path}", "white")
 
         remotes = {}
@@ -217,6 +222,7 @@ def checkout_branch(repo, branch):
 
 
 def clone_repository(remotes, target, branch):
+    target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     last_error = None
     for remote in remotes:
@@ -228,9 +234,23 @@ def clone_repository(remotes, target, branch):
         except Exception as e:
             last_error = e
             cprint(f"Clone failed from {remote}: {e}", "red", file=sys.stderr)
-            if os.path.exists(target):
+            if not target_existed and os.path.exists(target):
                 shutil.rmtree(target)
     raise last_error
+
+
+def is_empty_directory(path):
+    return os.path.isdir(path) and not os.listdir(path)
+
+
+def repository_target(workspace, path, here=False):
+    if not here:
+        return os.path.normpath(os.path.join(workspace, path))
+
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) <= 1:
+        return workspace
+    return os.path.normpath(os.path.join(workspace, *parts[1:]))
 
 
 def select_remotes(remote_value, preferred_remote=None):
@@ -273,7 +293,7 @@ def run_post_commands(commands, directory):
     return ok
 
 
-def deploy_manifest(workspace, manifest_file, preferred_remote=None):
+def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False):
     manifest = load_manifest(manifest_file)
     summary = {
         "cloned": 0,
@@ -290,14 +310,14 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None):
             continue
 
         path = repository["path"]
-        target = os.path.normpath(os.path.join(workspace, path))
+        target = repository_target(workspace, path, here)
         remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
         remotes = select_remotes(remote_value, preferred_remote)
 
         try:
-            if os.path.exists(target):
+            if os.path.exists(target) and not is_empty_directory(target):
                 if not gwalk.RepoWalk.isRepoRoot(target):
                     cprint(f"Skip non-git directory: {target}", "red", file=sys.stderr)
                     summary["failed"] += 1
@@ -347,6 +367,12 @@ def main():
         help="scan workspace and update manifest after confirmation",
     )
     parser.add_argument("--remote", help="preferred remote name")
+    parser.add_argument(
+        "-H",
+        "--here",
+        action="store_true",
+        help="deploy the manifest root repository into the workspace itself",
+    )
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
@@ -363,7 +389,7 @@ def main():
     if not os.path.exists(manifest):
         cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
         return 1
-    return deploy_manifest(workspace, manifest, args.remote)
+    return deploy_manifest(workspace, manifest, args.remote, args.here)
 
 
 if __name__ == "__main__":
