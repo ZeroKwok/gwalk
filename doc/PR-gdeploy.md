@@ -105,6 +105,26 @@ If `describe` ends with `-dirty`, scan prints a yellow warning:
 Warning: dirty repository: com/uiframe (v1.2.0-3-g7f4a9f2-dirty)
 ```
 
+Git submodules are written to the manifest as visible entries, but marked as submodules. If scan encounters a repository represented by a `.git` file, it records `type: 'submodule'`, records its nearest parent repository path, and prints a yellow warning:
+
+```text
+Warning: found git submodule: FoneTool/com/library
+```
+
+Example:
+
+```python
+{
+    'path': 'FoneTool/com/library',
+    'type': 'submodule',
+    'parent': 'FoneTool',
+    'commit': '...',
+    'describe': '...',
+    'remote': {'origin': '...'},
+    'branch': 'main',
+}
+```
+
 Scan prints each walked repository:
 
 ```text
@@ -183,21 +203,27 @@ With `--remote missing`, deploy falls back to the first remote in the manifest e
 
 For each repository entry:
 
-1. Resolve variables in `remote`, `branch`, and `post`.
-2. Compute target path as `<workspace>/<path>`.
-3. If target does not exist:
+1. If `type` is `submodule`, skip independent deployment and print:
+
+   ```text
+   Skip submodule: FoneTool/com/library (managed by FoneTool)
+   ```
+
+2. Resolve variables in `remote`, `branch`, and `post`.
+3. Compute target path as `<workspace>/<path>`.
+4. If target does not exist:
    - Require at least one selected remote URL.
    - Create the parent directory.
    - Clone from selected remote URLs in order.
    - If a clone attempt fails and leaves a partial target directory, remove it before trying the next URL.
-4. If target exists and is an empty directory:
+5. If target exists and is an empty directory:
    - Clone into that empty directory.
    - This supports users who create the deployment directory before running `gdeploy`.
-5. If target exists and is not empty:
+6. If target exists and is not empty:
    - It must be a Git repository root.
    - Non-Git directories are not overwritten and count as failures.
    - Run fetch, checkout branch, and fast-forward pull.
-6. If `post` exists:
+7. If `post` exists:
    - Run each command with the repository root as working directory.
    - Commands are executed with `shell=True`.
    - Any non-zero command marks `post_failed`, but deployment continues to following repositories.
@@ -236,6 +262,16 @@ Branch handling:
 - Otherwise, create a new local branch.
 - Pull uses `git pull --ff-only`.
 - Pull failure is warned but does not immediately abort that repository.
+
+Submodule handling:
+
+- After clone or update, if the repository has submodules, deploy runs:
+
+  ```bash
+  git submodule update --init --recursive
+  ```
+
+- Submodules are therefore managed through their parent repository, not as separate manifest entries.
 
 At the end, deploy prints:
 

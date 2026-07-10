@@ -1,6 +1,8 @@
 import ast
 import os
+import shutil
 import sys
+from types import SimpleNamespace
 
 import git
 
@@ -107,6 +109,7 @@ def test_scan_workspace_uses_repo_walk(tmp_path):
     assert repositories == [
         {
             "path": "src/demo",
+            "type": "repository",
             "commit": repo.head.commit.hexsha,
             "describe": repo.git.describe("--tags", "--dirty", "--always"),
             "remote": {
@@ -133,6 +136,7 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
     assert repositories == [
         {
             "path": "FoneToolBackup",
+            "type": "repository",
             "commit": repo.head.commit.hexsha,
             "describe": repo.git.describe("--tags", "--dirty", "--always"),
             "remote": {"origin": "https://example.com/FoneToolBackup.git"},
@@ -152,6 +156,28 @@ def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
 
     assert repositories[0]["describe"].endswith("-dirty")
     assert "Warning: dirty repository: demo" in output.out
+
+
+def test_scan_workspace_records_gitfile_submodule(tmp_path, capsys):
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    gitdir = parent / ".git" / "modules" / "child"
+    child.mkdir(parents=True)
+    make_repo(parent, "main")
+    make_repo(child, "main")
+    shutil.rmtree(gitdir, ignore_errors=True)
+    gitdir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(child / ".git"), str(gitdir))
+    (child / ".git").write_text("gitdir: ../.git/modules/child\n", encoding="utf-8")
+
+    repositories = gdeploy.scan_workspace(str(tmp_path))
+    output = capsys.readouterr()
+
+    assert [item["path"] for item in repositories] == ["parent", "parent/child"]
+    assert repositories[0]["type"] == "repository"
+    assert repositories[1]["type"] == "submodule"
+    assert repositories[1]["parent"] == "parent"
+    assert "Warning: found git submodule: parent/child" in output.out
 
 
 def test_select_remotes_defaults_to_origin_then_first_remote():
@@ -195,6 +221,7 @@ def test_merge_repositories_preserves_post_and_unscanned_items():
     scanned = [
         {
             "path": "demo",
+            "type": "repository",
             "commit": "new",
             "describe": "new",
             "remote": {"origin": "https://example.com/demo.git"},
@@ -207,6 +234,7 @@ def test_merge_repositories_preserves_post_and_unscanned_items():
     assert merged == [
         {
             "path": "demo",
+            "type": "repository",
             "commit": "new",
             "describe": "new",
             "remote": {"origin": "https://example.com/demo.git"},
@@ -248,7 +276,7 @@ def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch,
     manifest_file.write_text(
         "{'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
         f"'https://example.com/demo.git'}}, 'branch': 'main', 'commit': '{commit}', "
-        f"'describe': '{describe}'}}]}}\n",
+        f"'describe': '{describe}', 'type': 'repository'}}]}}\n",
         encoding="utf-8",
     )
 
@@ -371,6 +399,56 @@ def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
     ) == 0
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == first_commit
+
+
+def test_deploy_manifest_skips_submodule_entries(tmp_path, capsys):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "parent/child",
+                "type": "submodule",
+                "parent": "parent",
+                "remote": {"origin": "https://example.com/child.git"},
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    output = capsys.readouterr()
+
+    assert "Skip submodule: parent/child (managed by parent)" in output.out
+    assert not (workspace / "parent").exists()
+
+
+def test_update_submodules_runs_when_repository_has_submodules(tmp_path):
+    calls = []
+    repo = SimpleNamespace(
+        submodules=[object()],
+        working_dir=str(tmp_path),
+        git=SimpleNamespace(submodule=lambda *args: calls.append(args)),
+    )
+
+    gdeploy.update_submodules(repo)
+
+    assert calls == [("update", "--init", "--recursive")]
+
+
+def test_update_submodules_skips_when_repository_has_no_submodules(tmp_path):
+    calls = []
+    repo = SimpleNamespace(
+        submodules=[],
+        working_dir=str(tmp_path),
+        git=SimpleNamespace(submodule=lambda *args: calls.append(args)),
+    )
+
+    gdeploy.update_submodules(repo)
+
+    assert calls == []
 
 
 def test_deploy_manifest_fails_for_existing_non_git_directory(tmp_path):

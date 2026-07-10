@@ -99,7 +99,14 @@ def scan_workspace(workspace, preferred_remote=None):
     workspace = os.path.normpath(os.path.abspath(workspace))
     root_is_repo = gwalk.RepoWalk.isRepoRoot(workspace)
     root_name = os.path.basename(workspace)
+    normal_paths = []
     for directory in gwalk.RepoWalk(workspace, recursive=True):
+        for _, dirs, files in os.walk(directory):
+            repo_type = gwalk.RepoWalk.repoTypeByFiles(dirs, files)
+            break
+        else:
+            repo_type = 0
+
         repo = git.Repo(directory)
         path = os.path.relpath(repo.working_dir, workspace).replace("\\", "/")
         if root_is_repo:
@@ -114,8 +121,19 @@ def scan_workspace(workspace, preferred_remote=None):
 
         item = {
             "path": path,
+            "type": "submodule" if repo_type == 2 else "repository",
             "commit": repo.head.commit.hexsha,
         }
+        if repo_type == 2:
+            parent = ""
+            for candidate in reversed(normal_paths):
+                if path.startswith(candidate + "/"):
+                    parent = candidate
+                    break
+            item["parent"] = parent
+            cprint(f"Warning: found git submodule: {path}", "yellow")
+        else:
+            normal_paths.append(path)
 
         try:
             item["describe"] = repo.git.describe("--tags", "--dirty", "--always")
@@ -239,6 +257,18 @@ def checkout_commit(repo, commit):
     repo.git.checkout(commit)
 
 
+def update_submodules(repo):
+    try:
+        modules = repo.submodules
+    except Exception:
+        modules = []
+    if not modules:
+        return
+
+    cprint(f"Update submodules in {repo.working_dir}", "green")
+    repo.git.submodule("update", "--init", "--recursive")
+
+
 def clone_repository(remotes, target, branch):
     target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -248,6 +278,7 @@ def clone_repository(remotes, target, branch):
             cprint(f"Clone {target} from {remote}", "green")
             repo = git.Repo.clone_from(remote, target)
             checkout_branch(repo, branch)
+            update_submodules(repo)
             return repo
         except Exception as e:
             last_error = e
@@ -328,6 +359,12 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False,
             continue
 
         path = repository["path"]
+        if repository.get("type") == "submodule":
+            parent = repository.get("parent") or "<unknown>"
+            cprint(f"Skip submodule: {path} (managed by {parent})", "yellow")
+            summary["skipped"] += 1
+            continue
+
         target = repository_target(workspace, path, here)
         remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
@@ -345,6 +382,7 @@ def deploy_manifest(workspace, manifest_file, preferred_remote=None, here=False,
                 cprint(f"Update {target}", "green")
                 repo = git.Repo(target)
                 checkout_branch(repo, branch)
+                update_submodules(repo)
                 summary["updated"] += 1
             else:
                 if not remotes:
