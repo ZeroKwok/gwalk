@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.3
+
+添加 `garchive` 工具, 支持普通仓库与 archive/mirror 仓库之间转换。
+转换前自动备份 `.git/config`, `to-archive` 要求仓库干净, `restore` 支持指定目标目录和可选分支检出。
+优化 `garchive` 命令行为 `--archive/--restore --path --name --remote --branch`。
+
 ## v0.3.2
 
 添加 `gdeploy` 选项 `--listed` 支持仅扫描并更新清单中已存在的仓库。
