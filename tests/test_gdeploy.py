@@ -1,10 +1,12 @@
 import ast
 import os
 import shutil
+import subprocess
 import sys
 from types import SimpleNamespace
 
 import git
+import pytest
 
 from gwalk import gdeploy
 
@@ -737,3 +739,50 @@ def test_deploy_manifest_fails_for_existing_non_git_directory(tmp_path):
     manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
 
     assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
+
+
+def test_run_git_command_terminates_child_on_keyboard_interrupt(monkeypatch):
+    calls = []
+
+    class Process:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def send_signal(self, value):
+            calls.append(("signal", value))
+            self.returncode = 130
+
+        def terminate(self):
+            calls.append(("terminate",))
+            self.returncode = 130
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return self.returncode
+
+        def kill(self):
+            calls.append(("kill",))
+            self.returncode = 130
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Process())
+    monkeypatch.setattr(gdeploy.time, "sleep", lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        gdeploy.run_git_command(["clone", "remote", "target"])
+
+    assert ("wait", 3) in calls
+    assert ("kill",) not in calls
+
+
+def test_main_returns_130_on_keyboard_interrupt(tmp_path, monkeypatch, capsys):
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({"variables": [], "repositories": []}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["gdeploy", str(manifest_file)])
+    monkeypatch.setattr(gdeploy, "deploy_manifest", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    assert gdeploy.main() == 130
+    output = capsys.readouterr()
+
+    assert "Interrupted" in output.err

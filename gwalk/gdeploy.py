@@ -11,8 +11,10 @@ import difflib
 import os
 import pprint
 import shutil
+import signal
 import subprocess
 import sys
+import time
 
 import git
 from termcolor import cprint
@@ -408,6 +410,38 @@ def update_submodules(repo):
     repo.git.submodule("update", "--init", "--recursive")
 
 
+def terminate_process(process):
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            process.terminate()
+        process.wait(timeout=3)
+    except Exception:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def run_git_command(args, cwd=None):
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    process = subprocess.Popen(
+        ["git", *args],
+        cwd=cwd,
+        creationflags=flags,
+    )
+    try:
+        while process.poll() is None:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        terminate_process(process)
+        raise
+    if process.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {process.returncode}")
+
+
 def clone_repository(remotes, target, branch):
     target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -415,7 +449,8 @@ def clone_repository(remotes, target, branch):
     for remote in remotes:
         try:
             cprint(f"Clone {target} from {remote}", "green")
-            repo = git.Repo.clone_from(remote, target)
+            run_git_command(["clone", remote, target])
+            repo = git.Repo(target)
             checkout_branch(repo, branch)
             update_submodules(repo)
             return repo
@@ -499,13 +534,10 @@ def clone_mode_repository(mode, remotes, target):
     if mode == "archive":
         os.makedirs(target, exist_ok=True)
         clone_target = archive_git_dir(target)
-        clone_args = {"mirror": True}
     elif mode == "mirror":
         clone_target = target
-        clone_args = {"mirror": True}
     elif mode == "bare":
         clone_target = target
-        clone_args = {"bare": True}
     else:
         raise RuntimeError(f"Unsupported repository mode: {mode}")
 
@@ -513,7 +545,14 @@ def clone_mode_repository(mode, remotes, target):
     for remote in remotes:
         try:
             cprint(f"Clone {target} from {remote} ({mode})", "green")
-            return git.Repo.clone_from(remote, clone_target, **clone_args)
+            args = ["clone"]
+            if mode == "archive" or mode == "mirror":
+                args.append("--mirror")
+            elif mode == "bare":
+                args.append("--bare")
+            args.extend([remote, clone_target])
+            run_git_command(args)
+            return git.Repo(clone_target)
         except Exception as e:
             last_error = e
             cprint(f"Clone failed from {remote}: {e}", "red", file=sys.stderr)
@@ -723,12 +762,16 @@ def main():
     manifest = args.manifest.strip(" '\"") if args.manifest else os.path.join(workspace, DefaultManifest)
     manifest = os.path.normpath(os.path.abspath(manifest))
 
-    if args.scan:
-        return update_manifest(workspace, manifest, args.remote, args.listed)
-    if not os.path.exists(manifest):
-        cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
-        return 1
-    return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit, args.checkout)
+    try:
+        if args.scan:
+            return update_manifest(workspace, manifest, args.remote, args.listed)
+        if not os.path.exists(manifest):
+            cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
+            return 1
+        return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit, args.checkout)
+    except KeyboardInterrupt:
+        cprint("\nInterrupted", "red", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
