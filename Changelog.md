@@ -5,6 +5,7 @@
 添加 `garchive` 工具, 支持普通仓库与 archive/mirror 仓库之间转换。
 优化 `garchive` 命令行为 `--archive/--restore --path --name --remote --branch`。
 添加 `garchive -H/--here`，支持 archive `.git` 仓库原地恢复为普通仓库。
+添加 `gdeploy` 仓库 `mode`，支持 `archive`、`mirror`、`bare` 清单扫描和部署，并通过 `--checkout` 显式检出 archive 仓库。
 
 ## v0.3.2
 
