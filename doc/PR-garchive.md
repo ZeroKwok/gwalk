@@ -6,18 +6,19 @@
 
 The goal is backup/storage:
 
-- `to-archive` keeps only Git repository metadata as the active repository layout.
+- `archive` keeps only Git repository metadata as the active repository layout.
 - `restore` recreates a normal repository directory from the archive repository.
 
 CLI:
 
 ```bash
 garchive --archive [--path PATH] [--remote origin]
-garchive --restore [--path PATH] [--name TARGET] [--remote origin] [--branch BRANCH]
-garchive --restore --here [--path PATH] [--remote origin] [--branch BRANCH]
+garchive --restore [--path PATH] [--remote origin] [--branch BRANCH] [--name TARGET] 
+garchive --restore [--path PATH] [--remote origin] [--branch BRANCH] --here
 ```
 
-`--path` defaults to the current directory. `--name` only applies to non-in-place restore.
+- `--path` defaults to the current directory.
+- `--name` only applies to non-in-place restore.
 
 ## To Archive
 
@@ -122,7 +123,7 @@ Target must not exist or must be empty.
 ## Safety Rules
 
 - Config is backed up before every conversion direction.
-- `to-archive` refuses dirty repositories.
+- `archive` refuses dirty repositories.
 - `restore` refuses non-archive sources.
 - `restore` refuses non-empty target directories.
 - The tool prints each important operation before executing it:

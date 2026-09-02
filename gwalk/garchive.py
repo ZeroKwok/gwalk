@@ -109,7 +109,7 @@ def is_archive_repo(repo, remote):
     return repo.bare and bool_config(repo, f'remote "{remote}"', "mirror", False)
 
 
-def to_archive(path, remote):
+def archive(path, remote):
     path = os.path.normpath(os.path.abspath(path))
     repo = repo_from_worktree(path)
     if repo.is_dirty(untracked_files=True):
@@ -201,7 +201,7 @@ def main():
 
     try:
         if args.archive:
-            return to_archive(args.path, args.remote)
+            return archive(args.path, args.remote)
         if args.restore:
             return restore(args.path, args.name, args.remote, args.branch, args.here)
     except Exception as e:

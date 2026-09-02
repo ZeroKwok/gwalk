@@ -23,7 +23,7 @@ def make_repo(path, branch="main"):
 def make_archive_git_dir(path):
     repo = make_repo(path)
     repo.create_remote("origin", "https://example.com/source.git")
-    garchive.to_archive(str(path), "origin")
+    garchive.archive(str(path), "origin")
     return git.Repo(path / ".git")
 
 
@@ -31,7 +31,7 @@ def test_to_archive_sets_bare_mirror_and_backs_up_config(tmp_path, capsys):
     repo = make_repo(tmp_path)
     repo.create_remote("origin", "https://example.com/source.git")
 
-    assert garchive.to_archive(str(tmp_path), "origin") == 0
+    assert garchive.archive(str(tmp_path), "origin") == 0
     archived = git.Repo(tmp_path / ".git")
 
     assert archived.bare == True
@@ -48,7 +48,7 @@ def test_to_archive_rejects_dirty_repository(tmp_path):
     (tmp_path / "README.md").write_text("dirty\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="uncommitted or untracked"):
-        garchive.to_archive(str(tmp_path), "origin")
+        garchive.archive(str(tmp_path), "origin")
 
 
 def test_restore_moves_git_dir_to_target_and_updates_config(tmp_path):
