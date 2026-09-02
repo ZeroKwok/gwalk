@@ -8,6 +8,7 @@
 优化 `garchive restore --path` 支持指定父目录：含真实 `.git` 目录且未指定 `--name` 时自动原地还原；`.git` 为 gitdir 文件（worktree）时报错。
 重命名 `garchive` 参数 `--branch` 为 `--checkout`。
 优化 `garchive restore --checkout` 不带分支时使用当前 `HEAD` 分支。
+优化 `garchive` 使用固定 `config.archive` 归档原始 config，`restore` 检测到则还原并保留原配置。
 
 ## v0.3.3
 

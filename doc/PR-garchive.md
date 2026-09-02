@@ -55,10 +55,10 @@ Before conversion:
 
 - The repository must be non-bare.
 - The repository must be clean, including untracked files.
-- `.git/config` is backed up:
+- `.git/config` is archived as a fixed-name marker:
 
   ```text
-  .git/config -> .git/config.backup.<YYYYmmddHHMMSS>
+  .git/config -> .git/config.archive
   ```
 
 Conversion updates config:
@@ -96,11 +96,19 @@ The source must be:
 - `core.bare = true`
 - `remote.<remote>.mirror = true`
 
-Before restore modifies config, it backs up the source config:
+Before restore modifies config, it restores the original config from the archive marker if present:
+
+```text
+config.archive -> config
+```
+
+The pre-restore (archive) config is kept as a safety backup:
 
 ```text
 config -> config.backup.<YYYYmmddHHMMSS>
 ```
+
+If `config.archive` is absent (e.g. a repository archived by an older version), restore falls back to rewriting the config in place.
 
 Default restore creates or uses an empty target directory, moves the archive Git directory to:
 
@@ -164,8 +172,9 @@ Target must not exist or must be empty.
 - `restore` refuses non-empty target directories.
 - `archive --clean` asks for confirmation when ignored files exist, unless `--force`.
 - `restore` rejects parent directory paths whose `.git` is a `gitdir` file (worktree unsupported).
+- `restore` prefers `config.archive` and falls back to in-place config rewrite when absent.
 - The tool prints each important operation before executing it:
-  - config backup
+  - config archive/backup
   - config mutation
   - git directory move
   - optional checkout
@@ -190,3 +199,4 @@ Covered scenarios:
 - `restore` auto-enables in-place restore for a parent directory with a real `.git` directory.
 - `restore` honors `--name` (move-out) even for a parent directory path.
 - `restore` rejects a parent directory whose `.git` is a `gitdir` file.
+- `archive` writes a fixed `config.archive` marker; `restore` restores it and preserves original config values.

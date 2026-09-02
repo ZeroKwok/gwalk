@@ -20,6 +20,20 @@ def config_backup_name(config):
     return f"{config}.backup.{timestamp}"
 
 
+def archive_config_path(config):
+    return f"{config}.archive"
+
+
+def save_config_archive(git_dir):
+    config = os.path.join(git_dir, "config")
+    if not os.path.isfile(config):
+        raise RuntimeError(f"Git config not found: {config}")
+
+    archive = archive_config_path(config)
+    shutil.copy2(config, archive)
+    return archive
+
+
 def backup_config(git_dir):
     config = os.path.join(git_dir, "config")
     if not os.path.isfile(config):
@@ -27,6 +41,18 @@ def backup_config(git_dir):
 
     backup = config_backup_name(config)
     shutil.copy2(config, backup)
+    return backup
+
+
+def restore_config_archive(git_dir):
+    config = os.path.join(git_dir, "config")
+    archive = archive_config_path(config)
+    if not os.path.isfile(archive):
+        return False
+
+    cprint("Restore config.archive -> config", "green")
+    backup = backup_config(git_dir)
+    shutil.move(archive, config)
     return backup
 
 
@@ -213,7 +239,7 @@ def archive(path, remote, clean=False, force=False):
             raise RuntimeError("Clean cancelled by user")
 
     git_dir = repo.git_dir
-    backup = backup_config(git_dir)
+    backup = save_config_archive(git_dir)
 
     if clean:
         cprint("Remove working directory files", "green")
@@ -222,7 +248,7 @@ def archive(path, remote, clean=False, force=False):
     set_archive_config(repo, remote)
 
     cprint(f"Archive conversion done: {git_dir}", "green")
-    cprint(f"Config backup: {backup}", "green")
+    cprint(f"Config archive: {backup}", "green")
     return 0
 
 
@@ -235,8 +261,13 @@ def restore_here(source, remote, branch):
     if os.path.basename(source) != ".git":
         raise RuntimeError("--here restore requires --path to point to a .git directory")
 
-    backup = backup_config(repo.git_dir)
-    set_worktree_config(repo, remote)
+    backup = restore_config_archive(repo.git_dir)
+    if backup:
+        cprint(f"Config backup: {backup}", "green")
+    else:
+        backup = backup_config(repo.git_dir)
+        set_worktree_config(repo, remote)
+        cprint(f"Config backup: {backup}", "green")
 
     worktree = os.path.dirname(repo.git_dir)
     branch = resolve_checkout_branch(repo, branch)
@@ -246,7 +277,6 @@ def restore_here(source, remote, branch):
         git.Repo(worktree).git.reset("--hard", branch)
 
     cprint(f"Restore done: {worktree}", "green")
-    cprint(f"Config backup: {backup}", "green")
     return 0
 
 
@@ -271,12 +301,17 @@ def restore(source, target, remote, branch, here=False):
     if os.path.exists(target_git):
         raise RuntimeError(f"Target git directory already exists: {target_git}")
 
-    backup = backup_config(repo.git_dir)
     cprint(f"Move {repo.git_dir} -> {target_git}", "green")
     shutil.move(repo.git_dir, target_git)
 
     restored = git.Repo(target_git)
-    set_worktree_config(restored, remote)
+    backup = restore_config_archive(target_git)
+    if backup:
+        cprint(f"Config backup: {backup}", "green")
+    else:
+        backup = backup_config(target_git)
+        set_worktree_config(restored, remote)
+        cprint(f"Config backup: {backup}", "green")
 
     branch = resolve_checkout_branch(restored, branch)
     if branch:
@@ -286,7 +321,6 @@ def restore(source, target, remote, branch, here=False):
         worktree.git.reset("--hard", branch)
 
     cprint(f"Restore done: {target}", "green")
-    cprint(f"Config backup: {os.path.join(target_git, os.path.basename(backup))}", "green")
     return 0
 
 

@@ -37,10 +37,10 @@ def test_to_archive_sets_bare_mirror_and_backs_up_config(tmp_path, capsys):
     assert archived.bare == True
     assert garchive.bool_config(archived, 'remote "origin"', "mirror") == True
     assert archived.config_reader().get_value('remote "origin"', "fetch") == "+refs/*:refs/*"
-    assert list((tmp_path / ".git").glob("config.backup.*"))
+    assert (tmp_path / ".git" / "config.archive").is_file()
     output = capsys.readouterr().out
     assert "Archive conversion done:" in output
-    assert "Config backup:" in output
+    assert "Config archive:" in output
 
 
 def test_to_archive_rejects_dirty_repository(tmp_path):
@@ -86,6 +86,22 @@ def test_restore_moves_git_dir_to_target_and_updates_config(tmp_path):
         "+refs/heads/*:refs/remotes/origin/*"
     )
     assert list((target / ".git").glob("config.backup.*"))
+
+
+def test_restore_uses_archive_config_and_preserves_original_values(tmp_path):
+    source = tmp_path / "SomeDir"
+    repo = make_repo(source)
+    repo.create_remote("origin", "https://example.com/source.git")
+    with repo.config_writer() as config:
+        config.set_value("user", "custom", "preserved-value")
+    garchive.archive(str(source), "origin")
+
+    assert garchive.restore(str(source / ".git"), str(tmp_path / "Restored"), "origin", None) == 0
+    restored = git.Repo(tmp_path / "Restored" / ".git")
+
+    assert restored.config_reader().get_value("user", "custom") == "preserved-value"
+    assert restored.bare == False
+    assert not (tmp_path / "Restored" / ".git" / "config.archive").exists()
 
 
 def test_restore_uses_user_target_directory(tmp_path):
