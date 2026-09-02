@@ -109,6 +109,22 @@ def confirm_clean(ignored):
     return answer in ("y", "yes")
 
 
+def head_branch(repo):
+    try:
+        name = repo.git.symbolic_ref("--short", "HEAD").strip()
+        return name or None
+    except Exception:
+        return None
+
+
+def resolve_checkout_branch(repo, branch):
+    if branch:
+        return branch
+    if branch == "":
+        return head_branch(repo)
+    return None
+
+
 def remove_worktree(working_dir, git_dir):
     if not working_dir:
         return
@@ -223,6 +239,7 @@ def restore_here(source, remote, branch):
     set_worktree_config(repo, remote)
 
     worktree = os.path.dirname(repo.git_dir)
+    branch = resolve_checkout_branch(repo, branch)
     if branch:
         cprint(f"Checkout {branch}", "green")
         git.Repo(worktree).git.checkout("-f", branch)
@@ -261,6 +278,7 @@ def restore(source, target, remote, branch, here=False):
     restored = git.Repo(target_git)
     set_worktree_config(restored, remote)
 
+    branch = resolve_checkout_branch(restored, branch)
     if branch:
         cprint(f"Checkout {branch}", "green")
         worktree = git.Repo(target)
@@ -281,7 +299,14 @@ def main():
     parser.add_argument("--path", default=os.getcwd(), help="repository path")
     parser.add_argument("--name", help="target normal repository directory for --restore")
     parser.add_argument("--remote", default=None, help="remote name")
-    parser.add_argument("--checkout", help="branch to checkout after restore")
+    parser.add_argument(
+        "--checkout",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="BRANCH",
+        help="checkout after restore; omit BRANCH to use the current HEAD branch",
+    )
     parser.add_argument(
         "-H",
         "--here",

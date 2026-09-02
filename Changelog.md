@@ -7,6 +7,7 @@
 添加 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
 优化 `garchive restore --path` 支持指定父目录：含真实 `.git` 目录且未指定 `--name` 时自动原地还原；`.git` 为 gitdir 文件（worktree）时报错。
 重命名 `garchive` 参数 `--branch` 为 `--checkout`。
+优化 `garchive restore --checkout` 不带分支时使用当前 `HEAD` 分支。
 
 ## v0.3.3
 

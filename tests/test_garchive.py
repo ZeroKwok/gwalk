@@ -122,6 +122,18 @@ def test_restore_with_branch_checks_out_worktree(tmp_path, capsys):
     assert "Skip checkout because --checkout was not specified" not in output
 
 
+def test_restore_checkout_without_branch_uses_head(tmp_path, capsys):
+    source = tmp_path / "SomeDir"
+    target = tmp_path / "Restored"
+    make_archive_git_dir(source)
+
+    garchive.restore(str(source / ".git"), str(target), "origin", "")
+
+    assert (target / "README.md").read_text(encoding="utf-8") == "test\n"
+    output = capsys.readouterr().out
+    assert "Checkout main" in output
+
+
 def test_restore_here_updates_config_without_checkout(tmp_path, capsys):
     source = tmp_path / "SomeDir"
     make_archive_git_dir(source)
@@ -236,6 +248,28 @@ def test_main_restore_here(tmp_path, monkeypatch):
 
     assert garchive.main() == 0
     assert git.Repo(source).bare == False
+
+
+def test_main_restore_checkout_without_branch(tmp_path, monkeypatch):
+    source = tmp_path / "SomeDir"
+    target = tmp_path / "Restored"
+    make_archive_git_dir(source)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "garchive",
+            "restore",
+            "--path",
+            str(source / ".git"),
+            "--name",
+            str(target),
+            "--checkout",
+        ],
+    )
+
+    assert garchive.main() == 0
+    assert (target / "README.md").read_text(encoding="utf-8") == "test\n"
 
 
 def test_main_rejects_old_flag(tmp_path, monkeypatch, capsys):

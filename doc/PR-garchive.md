@@ -13,8 +13,8 @@ CLI:
 
 ```bash
 garchive archive [--path PATH] [--remote REMOTE] [--clean] [--force]
-garchive restore [--path PATH] [--remote REMOTE] [--checkout BRANCH] [--name TARGET]
-garchive restore [--path PATH] [--remote REMOTE] [--checkout BRANCH] --here
+garchive restore [--path PATH] [--remote REMOTE] [--checkout [BRANCH]] [--name TARGET]
+garchive restore [--path PATH] [--remote REMOTE] [--checkout [BRANCH]] --here
 ```
 
 - `archive` / `restore` is a required positional argument.
@@ -121,6 +121,8 @@ Then it updates config:
 
 If `--checkout BRANCH` is provided, restore checks out that branch and resets the worktree to it.
 
+If `--checkout` is provided without a branch, restore checks out the current `HEAD` branch.
+
 If `--checkout` is not provided, restore does not checkout files.
 
 `--here` is the in-place restore mode:
@@ -129,6 +131,7 @@ If `--checkout` is not provided, restore does not checkout files.
 - The Git directory is not moved.
 - The same config backup and config mutation rules apply.
 - If `--checkout BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
+- If `--checkout` is provided without a branch, the current `HEAD` branch is checked out.
 - If `--checkout` is omitted, existing worktree files are left as-is.
 
 When `--path` is a parent directory (e.g. `SomeDir`) containing a real `.git` directory and `--name` is omitted, `restore` automatically applies in-place restore and prints a notice.
@@ -176,7 +179,8 @@ Covered scenarios:
 - Archive repository restores to normal config.
 - Restore honors explicit target directory.
 - Restore without `--checkout` does not checkout files.
-- Restore with `--checkout` checks out files.
+- Restore with `--checkout BRANCH` checks out files.
+- Restore with `--checkout` (no branch) checks out the current `HEAD` branch.
 - Target inference from `*.git` and remote URL.
 - Non-empty target is rejected.
 - Non-archive source is rejected.
