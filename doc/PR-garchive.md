@@ -21,6 +21,20 @@ garchive restore [--path PATH] [--remote REMOTE] [--branch BRANCH] --here
 - `--path` defaults to the current directory.
 - `--name` only applies to non-in-place restore.
 
+## Restore Source Resolution
+
+`restore --path` accepts either the archive Git directory or a parent directory that contains a real `.git` directory:
+
+```text
+SomeDir/.git     # archive Git directory
+SomeDir          # parent directory containing SomeDir/.git
+```
+
+If `--path` is a parent directory with a real `.git` directory (not a `gitdir` file) and no `--name` is given, `restore` auto-enables in-place restore (equivalent to `--here`).
+
+- `--name TARGET` takes precedence: it forces the move-out restore even for a parent directory path.
+- If the parent directory's `.git` is a file (a `gitdir` link, i.e. a linked worktree or submodule), `restore` rejects it and asks for the actual Git directory, because worktrees are not supported.
+
 ## Remote Selection
 
 If `--remote` is omitted:
@@ -117,6 +131,8 @@ If `--branch` is not provided, restore does not checkout files.
 - If `--branch BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
 - If `--branch` is omitted, existing worktree files are left as-is.
 
+When `--path` is a parent directory (e.g. `SomeDir`) containing a real `.git` directory and `--name` is omitted, `restore` automatically applies in-place restore and prints a notice.
+
 ## Target Rules
 
 If `--name TARGET` is provided, use it.
@@ -144,6 +160,7 @@ Target must not exist or must be empty.
 - `restore` refuses non-archive sources.
 - `restore` refuses non-empty target directories.
 - `archive --clean` asks for confirmation when ignored files exist, unless `--force`.
+- `restore` rejects parent directory paths whose `.git` is a `gitdir` file (worktree unsupported).
 - The tool prints each important operation before executing it:
   - config backup
   - config mutation
@@ -166,3 +183,6 @@ Covered scenarios:
 - Remote auto-detection: single remote, `origin` among multiple, and failure without `origin`.
 - `--clean` removes working directory files.
 - `--clean` prompts when ignored files exist; `--force` skips the prompt.
+- `restore` auto-enables in-place restore for a parent directory with a real `.git` directory.
+- `restore` honors `--name` (move-out) even for a parent directory path.
+- `restore` rejects a parent directory whose `.git` is a `gitdir` file.

@@ -337,3 +337,39 @@ def test_restore_auto_detects_remote(tmp_path):
 
     assert garchive.restore(str(source / ".git"), str(tmp_path / "Restored"), None, None) == 0
     assert (tmp_path / "Restored" / ".git").exists()
+
+
+def test_restore_parent_dir_auto_here(tmp_path, capsys):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+
+    assert garchive.restore(str(source), None, "origin", None) == 0
+
+    assert git.Repo(source).bare == False
+    assert (source / ".git").exists()
+    output = capsys.readouterr().out
+    assert "Using --here" in output
+
+
+def test_restore_parent_dir_with_name_moves_out(tmp_path):
+    source = tmp_path / "SomeDir"
+    target = tmp_path / "Restored"
+    make_archive_git_dir(source)
+
+    assert garchive.restore(str(source), str(target), "origin", None) == 0
+
+    assert (target / ".git").exists()
+    assert not (source / ".git").exists()
+
+
+def test_restore_parent_dir_gitdir_file_rejected(tmp_path):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+
+    real_git = source / ".git"
+    gitdir_file = source / ".git.dir"
+    os.rename(real_git, gitdir_file)
+    (source / ".git").write_text(f"gitdir: {gitdir_file}\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="worktree"):
+        garchive.restore(str(source), None, "origin", None)

@@ -5,6 +5,7 @@
 优化 `garchive` 使用位置参数 `archive`/`restore` 替代 `--archive`/`--restore`。
 添加 `garchive` 的 `--remote` 自动推断：单一 remote 或含 `origin` 时自动选择。
 添加 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
+优化 `garchive restore --path` 支持指定父目录：含真实 `.git` 目录且未指定 `--name` 时自动原地还原；`.git` 为 gitdir 文件（worktree）时报错。
 
 ## v0.3.3
 

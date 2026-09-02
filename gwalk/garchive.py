@@ -41,6 +41,25 @@ def repo_from_git_dir(path):
     return git.Repo(path)
 
 
+def resolve_source_git_dir(source):
+    source = os.path.normpath(os.path.abspath(source))
+
+    if source.endswith(".git"):
+        return source, False
+
+    candidate = os.path.join(source, ".git")
+
+    if os.path.isdir(candidate):
+        return candidate, True
+
+    if os.path.isfile(candidate):
+        raise RuntimeError(
+            f"Git worktree is not supported, please point --path to the actual git directory: {candidate}"
+        )
+
+    return source, False
+
+
 def remote_url(repo, remote):
     try:
         return next(iter(repo.remotes[remote].urls))
@@ -205,10 +224,14 @@ def restore_here(source, remote, branch):
 
 
 def restore(source, target, remote, branch, here=False):
-    if here:
+    source = os.path.normpath(os.path.abspath(source))
+    source, is_parent_dir = resolve_source_git_dir(source)
+
+    if here or (is_parent_dir and not target):
+        if is_parent_dir and not here:
+            cprint(f"Using --here: in-place restore of {source}", "yellow")
         return restore_here(source, remote, branch)
 
-    source = os.path.normpath(os.path.abspath(source))
     repo = repo_from_git_dir(source)
     remote = resolve_remote(repo, remote)
     if not is_archive_repo(repo, remote):
