@@ -13,8 +13,8 @@ CLI:
 
 ```bash
 garchive archive [--path PATH] [--remote REMOTE] [--clean] [--force]
-garchive restore [--path PATH] [--remote REMOTE] [--branch BRANCH] [--name TARGET]
-garchive restore [--path PATH] [--remote REMOTE] [--branch BRANCH] --here
+garchive restore [--path PATH] [--remote REMOTE] [--checkout BRANCH] [--name TARGET]
+garchive restore [--path PATH] [--remote REMOTE] [--checkout BRANCH] --here
 ```
 
 - `archive` / `restore` is a required positional argument.
@@ -119,17 +119,17 @@ Then it updates config:
     fetch = +refs/heads/*:refs/remotes/origin/*
 ```
 
-If `--branch BRANCH` is provided, restore checks out that branch and resets the worktree to it.
+If `--checkout BRANCH` is provided, restore checks out that branch and resets the worktree to it.
 
-If `--branch` is not provided, restore does not checkout files.
+If `--checkout` is not provided, restore does not checkout files.
 
 `--here` is the in-place restore mode:
 
 - `--path` must point to an archive `.git` directory, such as `SomeDir/.git`.
 - The Git directory is not moved.
 - The same config backup and config mutation rules apply.
-- If `--branch BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
-- If `--branch` is omitted, existing worktree files are left as-is.
+- If `--checkout BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
+- If `--checkout` is omitted, existing worktree files are left as-is.
 
 When `--path` is a parent directory (e.g. `SomeDir`) containing a real `.git` directory and `--name` is omitted, `restore` automatically applies in-place restore and prints a notice.
 
@@ -175,8 +175,8 @@ Covered scenarios:
 - Dirty repository refuses archive conversion.
 - Archive repository restores to normal config.
 - Restore honors explicit target directory.
-- Restore without `--branch` does not checkout files.
-- Restore with `--branch` checks out files.
+- Restore without `--checkout` does not checkout files.
+- Restore with `--checkout` checks out files.
 - Target inference from `*.git` and remote URL.
 - Non-empty target is rejected.
 - Non-archive source is rejected.

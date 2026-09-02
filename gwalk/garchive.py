@@ -37,6 +37,16 @@ def repo_from_worktree(path):
     return repo
 
 
+def has_worktree_files(repo):
+    working_dir = repo.working_dir
+    if not working_dir or not os.path.isdir(working_dir):
+        return False
+    return any(
+        os.path.abspath(os.path.join(working_dir, entry)) != os.path.abspath(repo.git_dir)
+        for entry in os.listdir(working_dir)
+    )
+
+
 def repo_from_git_dir(path):
     return git.Repo(path)
 
@@ -176,7 +186,7 @@ def is_archive_repo(repo, remote):
 def archive(path, remote, clean=False, force=False):
     path = os.path.normpath(os.path.abspath(path))
     repo = repo_from_worktree(path)
-    if repo.is_dirty(untracked_files=True):
+    if has_worktree_files(repo) and repo.is_dirty(untracked_files=True):
         raise RuntimeError("Repository has uncommitted or untracked changes")
 
     remote = resolve_remote(repo, remote)
@@ -271,7 +281,7 @@ def main():
     parser.add_argument("--path", default=os.getcwd(), help="repository path")
     parser.add_argument("--name", help="target normal repository directory for --restore")
     parser.add_argument("--remote", default=None, help="remote name")
-    parser.add_argument("--branch", help="branch to checkout after restore")
+    parser.add_argument("--checkout", help="branch to checkout after restore")
     parser.add_argument(
         "-H",
         "--here",
@@ -299,7 +309,7 @@ def main():
         if args.mode == "restore":
             if args.clean:
                 raise RuntimeError("--clean is only valid with archive mode")
-            return restore(args.path, args.name, args.remote, args.branch, args.here)
+            return restore(args.path, args.name, args.remote, args.checkout, args.here)
     except Exception as e:
         cprint(f"Error: {e}", "red", file=sys.stderr)
         return 1

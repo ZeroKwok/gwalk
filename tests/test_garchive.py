@@ -51,6 +51,25 @@ def test_to_archive_rejects_dirty_repository(tmp_path):
         garchive.archive(str(tmp_path), "origin")
 
 
+def test_to_archive_continues_when_worktree_already_removed(tmp_path):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+
+    for entry in os.listdir(tmp_path):
+        path = tmp_path / entry
+        if entry == ".git":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    assert garchive.archive(str(tmp_path), "origin") == 0
+    archived = git.Repo(tmp_path / ".git")
+    assert archived.bare == True
+    assert garchive.bool_config(archived, 'remote "origin"', "mirror") == True
+
+
 def test_restore_moves_git_dir_to_target_and_updates_config(tmp_path):
     source = tmp_path / "SomeDir"
     target = tmp_path / "Restored"
@@ -100,7 +119,7 @@ def test_restore_with_branch_checks_out_worktree(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Checkout main" in output
     assert "Config backup:" in output
-    assert "Skip checkout because --branch was not specified" not in output
+    assert "Skip checkout because --checkout was not specified" not in output
 
 
 def test_restore_here_updates_config_without_checkout(tmp_path, capsys):
