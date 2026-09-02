@@ -48,6 +48,51 @@ def remote_url(repo, remote):
         return ""
 
 
+def resolve_remote(repo, remote):
+    if remote:
+        return remote
+
+    names = [r.name for r in repo.remotes]
+    if len(names) == 1:
+        return names[0]
+    if "origin" in names:
+        return "origin"
+    raise RuntimeError(
+        f"Cannot infer remote, please provide --remote (available: {', '.join(names)})"
+    )
+
+
+def ignored_files(repo):
+    try:
+        return repo.git.ls_files("--others", "--ignored", "--exclude-standard").splitlines()
+    except Exception:
+        return []
+
+
+def confirm_clean(ignored):
+    if not ignored:
+        return True
+
+    cprint("Ignored files exist in the working directory:", "yellow")
+    for path in ignored:
+        cprint(f"  - {path}", "yellow")
+    answer = input("Clean working directory anyway? [y/N]: ").strip().lower()
+    return answer in ("y", "yes")
+
+
+def remove_worktree(working_dir, git_dir):
+    if not working_dir:
+        return
+    for entry in os.listdir(working_dir):
+        path = os.path.join(working_dir, entry)
+        if os.path.abspath(path) == os.path.abspath(git_dir):
+            continue
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+
+
 def derive_target(source, repo, remote):
     source = Path(source)
     name = source.name
@@ -109,15 +154,29 @@ def is_archive_repo(repo, remote):
     return repo.bare and bool_config(repo, f'remote "{remote}"', "mirror", False)
 
 
-def archive(path, remote):
+def archive(path, remote, clean=False, force=False):
     path = os.path.normpath(os.path.abspath(path))
     repo = repo_from_worktree(path)
     if repo.is_dirty(untracked_files=True):
         raise RuntimeError("Repository has uncommitted or untracked changes")
 
-    backup = backup_config(repo.git_dir)
+    remote = resolve_remote(repo, remote)
+
+    if clean:
+        ignored = ignored_files(repo)
+        if ignored and not force and not confirm_clean(ignored):
+            raise RuntimeError("Clean cancelled by user")
+
+    git_dir = repo.git_dir
+    backup = backup_config(git_dir)
+
+    if clean:
+        cprint("Remove working directory files", "green")
+        remove_worktree(repo.working_dir, git_dir)
+
     set_archive_config(repo, remote)
-    cprint(f"Archive conversion done: {repo.git_dir}", "green")
+
+    cprint(f"Archive conversion done: {git_dir}", "green")
     cprint(f"Config backup: {backup}", "green")
     return 0
 
@@ -125,6 +184,7 @@ def archive(path, remote):
 def restore_here(source, remote, branch):
     source = os.path.normpath(os.path.abspath(source))
     repo = repo_from_git_dir(source)
+    remote = resolve_remote(repo, remote)
     if not is_archive_repo(repo, remote):
         raise RuntimeError(f"Expected a bare mirror repository: {source}")
     if os.path.basename(source) != ".git":
@@ -150,6 +210,7 @@ def restore(source, target, remote, branch, here=False):
 
     source = os.path.normpath(os.path.abspath(source))
     repo = repo_from_git_dir(source)
+    remote = resolve_remote(repo, remote)
     if not is_archive_repo(repo, remote):
         raise RuntimeError(f"Expected a bare mirror repository: {source}")
 
@@ -183,12 +244,10 @@ def main():
         description="Convert Git repositories between normal and archive mirror layouts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--archive", action="store_true", help="convert normal repository to archive config")
-    mode.add_argument("--restore", action="store_true", help="restore archive repository to normal repository")
+    parser.add_argument("mode", choices=["archive", "restore"], help="operation mode")
     parser.add_argument("--path", default=os.getcwd(), help="repository path")
     parser.add_argument("--name", help="target normal repository directory for --restore")
-    parser.add_argument("--remote", default="origin", help="remote name")
+    parser.add_argument("--remote", default=None, help="remote name")
     parser.add_argument("--branch", help="branch to checkout after restore")
     parser.add_argument(
         "-H",
@@ -196,13 +255,27 @@ def main():
         action="store_true",
         help="restore archive .git directory in place",
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="remove working directory files after archive",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="skip confirmation when cleaning a working directory with ignored files",
+    )
 
     args = parser.parse_args()
 
     try:
-        if args.archive:
-            return archive(args.path, args.remote)
-        if args.restore:
+        if args.mode == "archive":
+            if not args.clean and args.force:
+                cprint("Warning: --force is only valid with --clean", "yellow")
+            return archive(args.path, args.remote, clean=args.clean, force=args.force)
+        if args.mode == "restore":
+            if args.clean:
+                raise RuntimeError("--clean is only valid with archive mode")
             return restore(args.path, args.name, args.remote, args.branch, args.here)
     except Exception as e:
         cprint(f"Error: {e}", "red", file=sys.stderr)

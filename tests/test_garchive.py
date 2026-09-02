@@ -174,7 +174,7 @@ def test_restore_rejects_non_archive_source(tmp_path):
 
 
 def test_main_returns_error_for_invalid_command_target(tmp_path, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["garchive", "--archive", "--path", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", ["garchive", "archive", "--path", str(tmp_path)])
 
     assert garchive.main() == 1
 
@@ -188,7 +188,7 @@ def test_main_restore_uses_name_option(tmp_path, monkeypatch):
         "argv",
         [
             "garchive",
-            "--restore",
+            "restore",
             "--path",
             str(source / ".git"),
             "--name",
@@ -208,7 +208,7 @@ def test_main_restore_here(tmp_path, monkeypatch):
         "argv",
         [
             "garchive",
-            "--restore",
+            "restore",
             "--path",
             str(source / ".git"),
             "--here",
@@ -217,3 +217,123 @@ def test_main_restore_here(tmp_path, monkeypatch):
 
     assert garchive.main() == 0
     assert git.Repo(source).bare == False
+
+
+def test_main_rejects_old_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["garchive", "--archive", "--path", str(tmp_path)])
+
+    with pytest.raises(SystemExit):
+        garchive.main()
+
+    err = capsys.readouterr().err
+    assert "unrecognized arguments: --archive" in err or "required: mode" in err
+
+
+def test_resolve_remote_single_remote(tmp_path):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+
+    assert garchive.resolve_remote(repo, None) == "origin"
+
+
+def test_resolve_remote_uses_origin_among_multiple(tmp_path):
+    repo = make_repo(tmp_path)
+    repo.create_remote("upstream", "https://example.com/upstream.git")
+    repo.create_remote("origin", "https://example.com/origin.git")
+
+    assert garchive.resolve_remote(repo, None) == "origin"
+
+
+def test_resolve_remote_fails_without_origin(tmp_path):
+    repo = make_repo(tmp_path)
+    repo.create_remote("upstream", "https://example.com/upstream.git")
+    repo.create_remote("fork", "https://example.com/fork.git")
+
+    with pytest.raises(RuntimeError, match="Cannot infer remote"):
+        garchive.resolve_remote(repo, None)
+
+
+def test_archive_auto_detects_single_remote(tmp_path):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+
+    assert garchive.archive(str(tmp_path), None) == 0
+    archived = git.Repo(tmp_path / ".git")
+    assert garchive.bool_config(archived, 'remote "origin"', "mirror") == True
+
+
+def test_archive_clean_removes_working_directory(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+    (tmp_path / "extra.txt").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("extra.txt\n", encoding="utf-8")
+    repo.index.add([".gitignore"])
+    repo.index.commit("ignore")
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    assert garchive.archive(str(tmp_path), "origin", clean=True) == 0
+
+    assert (tmp_path / ".git").is_dir()
+    assert not (tmp_path / "README.md").exists()
+    assert not (tmp_path / ".gitignore").exists()
+    assert not (tmp_path / "extra.txt").exists()
+
+
+def test_archive_clean_prompts_when_ignored_files_exist(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+    (tmp_path / "extra.txt").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("extra.txt\n", encoding="utf-8")
+    repo.index.add([".gitignore"])
+    repo.index.commit("ignore")
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    assert garchive.archive(str(tmp_path), "origin", clean=True) == 0
+    assert not (tmp_path / "README.md").exists()
+    assert not (tmp_path / "extra.txt").exists()
+
+    output = capsys.readouterr().out
+    assert "Ignored files exist" in output
+
+
+def test_archive_clean_cancels_when_user_declines(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+    (tmp_path / "extra.txt").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("extra.txt\n", encoding="utf-8")
+    repo.index.add([".gitignore"])
+    repo.index.commit("ignore")
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        garchive.archive(str(tmp_path), "origin", clean=True)
+
+    assert (tmp_path / "README.md").exists()
+
+
+def test_archive_clean_force_skips_prompt(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+    (tmp_path / "extra.txt").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("extra.txt\n", encoding="utf-8")
+    repo.index.add([".gitignore"])
+    repo.index.commit("ignore")
+
+    def fail(_):
+        raise AssertionError("input should not be called")
+
+    monkeypatch.setattr("builtins.input", fail)
+
+    assert garchive.archive(str(tmp_path), "origin", clean=True, force=True) == 0
+    assert not (tmp_path / "extra.txt").exists()
+
+
+def test_restore_auto_detects_remote(tmp_path):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+
+    assert garchive.restore(str(source / ".git"), str(tmp_path / "Restored"), None, None) == 0
+    assert (tmp_path / "Restored" / ".git").exists()

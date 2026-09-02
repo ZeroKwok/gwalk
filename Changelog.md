@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.4
+
+优化 `garchive` 使用位置参数 `archive`/`restore` 替代 `--archive`/`--restore`。
+添加 `garchive` 的 `--remote` 自动推断：单一 remote 或含 `origin` 时自动选择。
+添加 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
+
 ## v0.3.3
 
 添加 `garchive` 工具, 支持普通仓库与 archive/mirror 仓库之间转换。

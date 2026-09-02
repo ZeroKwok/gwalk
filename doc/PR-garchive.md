@@ -12,13 +12,22 @@ The goal is backup/storage:
 CLI:
 
 ```bash
-garchive --archive [--path PATH] [--remote origin]
-garchive --restore [--path PATH] [--remote origin] [--branch BRANCH] [--name TARGET] 
-garchive --restore [--path PATH] [--remote origin] [--branch BRANCH] --here
+garchive archive [--path PATH] [--remote REMOTE] [--clean] [--force]
+garchive restore [--path PATH] [--remote REMOTE] [--branch BRANCH] [--name TARGET]
+garchive restore [--path PATH] [--remote REMOTE] [--branch BRANCH] --here
 ```
 
+- `archive` / `restore` is a required positional argument.
 - `--path` defaults to the current directory.
 - `--name` only applies to non-in-place restore.
+
+## Remote Selection
+
+If `--remote` is omitted:
+
+- If the repository has exactly one remote, use it.
+- If the repository has multiple remotes and one is named `origin`, use `origin`.
+- Otherwise, fail and ask the user to pass `--remote`.
 
 ## To Archive
 
@@ -50,6 +59,14 @@ Conversion updates config:
 ```
 
 The worktree files are not deleted or moved.
+
+### Clean Working Directory
+
+By default `archive` keeps the working directory files. With `--clean`, `archive` removes the working directory contents (everything except `.git`) after converting the config.
+
+- If ignored files exist in the working directory, `archive` lists them and asks for confirmation before deleting.
+- `--force` skips that confirmation.
+- `--clean` is only valid for `archive` mode.
 
 ## Restore
 
@@ -126,6 +143,7 @@ Target must not exist or must be empty.
 - `archive` refuses dirty repositories.
 - `restore` refuses non-archive sources.
 - `restore` refuses non-empty target directories.
+- `archive --clean` asks for confirmation when ignored files exist, unless `--force`.
 - The tool prints each important operation before executing it:
   - config backup
   - config mutation
@@ -145,3 +163,6 @@ Covered scenarios:
 - Target inference from `*.git` and remote URL.
 - Non-empty target is rejected.
 - Non-archive source is rejected.
+- Remote auto-detection: single remote, `origin` among multiple, and failure without `origin`.
+- `--clean` removes working directory files.
+- `--clean` prompts when ignored files exist; `--force` skips the prompt.
