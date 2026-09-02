@@ -298,6 +298,43 @@ def test_main_rejects_old_flag(tmp_path, monkeypatch, capsys):
     assert "unrecognized arguments: --archive" in err or "required: mode" in err
 
 
+def test_main_restore_here_with_name_is_rejected(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "SomeDir"
+    target = tmp_path / "Target"
+    make_archive_git_dir(source)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "garchive",
+            "restore",
+            "--path",
+            str(source / ".git"),
+            "--here",
+            "--name",
+            str(target),
+        ],
+    )
+
+    assert garchive.main() == 1
+    err = capsys.readouterr().err
+    assert "--name cannot be used with --here" in err
+
+
+def test_main_archive_with_name_is_rejected(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    repo.create_remote("origin", "https://example.com/source.git")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["garchive", "archive", "--path", str(tmp_path), "--name", str(tmp_path / "x")],
+    )
+
+    assert garchive.main() == 1
+    err = capsys.readouterr().err
+    assert "--name is only valid with restore mode" in err
+
+
 def test_resolve_remote_single_remote(tmp_path):
     repo = make_repo(tmp_path)
     repo.create_remote("origin", "https://example.com/source.git")

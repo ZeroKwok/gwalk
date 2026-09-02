@@ -19,7 +19,9 @@ garchive restore [--path PATH] [--remote REMOTE] [--checkout [BRANCH]] --here
 
 - `archive` / `restore` is a required positional argument.
 - `--path` defaults to the current directory.
-- `--name` only applies to non-in-place restore.
+- `--name` only applies to `restore`; it forces the move-out restore.
+- `--here` only applies to `restore`; it cannot be combined with `--name`.
+- `--clean` / `--force` only apply to `archive`.
 
 ## Restore Source Resolution
 
@@ -137,10 +139,11 @@ If `--checkout` is not provided, restore does not checkout files.
 
 - `--path` must point to an archive `.git` directory, such as `SomeDir/.git`.
 - The Git directory is not moved.
-- The same config backup and config mutation rules apply.
+- The same config restore rules apply (prefer `config.archive`, otherwise rewrite in place).
 - If `--checkout BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
 - If `--checkout` is provided without a branch, the current `HEAD` branch is checked out.
 - If `--checkout` is omitted, existing worktree files are left as-is.
+- `--name` cannot be combined with `--here`.
 
 When `--path` is a parent directory (e.g. `SomeDir`) containing a real `.git` directory and `--name` is omitted, `restore` automatically applies in-place restore and prints a notice.
 
@@ -148,7 +151,7 @@ When `--path` is a parent directory (e.g. `SomeDir`) containing a real `.git` di
 
 If `--name TARGET` is provided, use it.
 
-`--name` is ignored by `--here`; in-place restore always uses the parent directory of the `.git` path.
+`--name` is rejected when combined with `--here`; in-place restore always uses the parent directory of the `.git` path.
 
 If `--name` is omitted:
 

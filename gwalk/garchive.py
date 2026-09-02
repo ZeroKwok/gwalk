@@ -362,12 +362,22 @@ def main():
 
     try:
         if args.mode == "archive":
+            if args.name:
+                raise RuntimeError("--name is only valid with restore mode")
+            if args.checkout is not None:
+                raise RuntimeError("--checkout is only valid with restore mode")
+            if args.here:
+                raise RuntimeError("--here is only valid with restore mode")
             if not args.clean and args.force:
                 cprint("Warning: --force is only valid with --clean", "yellow")
             return archive(args.path, args.remote, clean=args.clean, force=args.force)
         if args.mode == "restore":
             if args.clean:
                 raise RuntimeError("--clean is only valid with archive mode")
+            if args.force:
+                cprint("Warning: --force is only valid with archive --clean", "yellow")
+            if args.here and args.name:
+                raise RuntimeError("--name cannot be used with --here")
             return restore(args.path, args.name, args.remote, args.checkout, args.here)
     except Exception as e:
         cprint(f"Error: {e}", "red", file=sys.stderr)
