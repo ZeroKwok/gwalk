@@ -29,7 +29,7 @@ If `--remote` is omitted:
 - If the repository has multiple remotes and one is named `origin`, use `origin`.
 - Otherwise, fail and ask the user to pass `--remote`.
 
-## To Archive
+## Archive
 
 Input is a normal repository directory:
 
