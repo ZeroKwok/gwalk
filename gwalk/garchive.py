@@ -15,13 +15,12 @@ import git
 from termcolor import cprint
 
 
-def config_backup_name(config):
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{config}.backup.{timestamp}"
-
-
 def archive_config_path(config):
     return f"{config}.archive"
+
+
+def mate_archive_path(git_dir):
+    return os.path.join(git_dir, "mate.archive")
 
 
 def save_config_archive(git_dir):
@@ -34,26 +33,15 @@ def save_config_archive(git_dir):
     return archive
 
 
-def backup_config(git_dir):
-    config = os.path.join(git_dir, "config")
-    if not os.path.isfile(config):
-        raise RuntimeError(f"Git config not found: {config}")
-
-    backup = config_backup_name(config)
-    shutil.copy2(config, backup)
-    return backup
-
-
 def restore_config_archive(git_dir):
     config = os.path.join(git_dir, "config")
     archive = archive_config_path(config)
     if not os.path.isfile(archive):
-        return False
+        raise RuntimeError(f"Archive config not found: {archive}")
 
     cprint("Restore config.archive -> config", "green")
-    backup = backup_config(git_dir)
     shutil.move(archive, config)
-    return backup
+    return config
 
 
 def repo_from_worktree(path):
@@ -80,9 +68,6 @@ def repo_from_git_dir(path):
 def resolve_source_git_dir(source):
     source = os.path.normpath(os.path.abspath(source))
 
-    if source.endswith(".git"):
-        return source, False
-
     candidate = os.path.join(source, ".git")
 
     if os.path.isdir(candidate):
@@ -94,27 +79,6 @@ def resolve_source_git_dir(source):
         )
 
     return source, False
-
-
-def remote_url(repo, remote):
-    try:
-        return next(iter(repo.remotes[remote].urls))
-    except Exception:
-        return ""
-
-
-def resolve_remote(repo, remote):
-    if remote:
-        return remote
-
-    names = [r.name for r in repo.remotes]
-    if len(names) == 1:
-        return names[0]
-    if "origin" in names:
-        return "origin"
-    raise RuntimeError(
-        f"Cannot infer remote, please provide --remote (available: {', '.join(names)})"
-    )
 
 
 def ignored_files(repo):
@@ -164,22 +128,13 @@ def remove_worktree(working_dir, git_dir):
             os.remove(path)
 
 
-def derive_target(source, repo, remote):
+def derive_target(source):
     source = Path(source)
     name = source.name
-    if name != ".git" and name.endswith(".git"):
+    if name == ".git":
+        return str(source.parent)
+    if name.endswith(".git"):
         return str(source.with_name(name[:-4]))
-
-    url = remote_url(repo, remote)
-    if url:
-        url_path = url.rstrip("/").replace("\\", "/")
-        name = url_path.rsplit("/", 1)[-1]
-        if name.endswith(".git"):
-            name = name[:-4]
-        if name:
-            parent = source.parent.parent if source.name == ".git" else source.parent
-            return str(parent / name)
-
     raise RuntimeError("Cannot infer target directory, please provide TARGET")
 
 
@@ -193,45 +148,67 @@ def ensure_empty_target(target):
         os.makedirs(target)
 
 
-def bool_config(repo, section, option, default=False):
-    reader = repo.config_reader()
-    try:
-        return reader.get_value(section, option) in (True, "true", "True", "1", 1)
-    except Exception:
-        return default
-
-
-def set_archive_config(repo, remote):
-    cprint("Set core.bare = true", "green")
+def set_archive_config(repo):
+    cprint("Set all remotes as mirror", "green")
     with repo.config_writer() as writer:
         writer.set_value("core", "bare", "true")
-        writer.set_value(f'remote "{remote}"', "mirror", "true")
-        writer.set_value(f'remote "{remote}"', "fetch", "+refs/*:refs/*")
+        for remote in repo.remotes:
+            section = f'remote "{remote.name}"'
+            writer.set_value(section, "mirror", "true")
+            writer.set_value(section, "fetch", "+refs/*:refs/*")
 
 
-def set_worktree_config(repo, remote):
-    cprint("Set core.bare = false", "green")
-    with repo.config_writer() as writer:
-        writer.set_value("core", "bare", "false")
-        writer.set_value(f'remote "{remote}"', "mirror", "false")
-        writer.set_value(
-            f'remote "{remote}"',
-            "fetch",
-            f"+refs/heads/*:refs/remotes/{remote}/*",
-        )
+def is_archive_repo(repo):
+    return repo.bare and os.path.isfile(archive_config_path(os.path.join(repo.git_dir, "config")))
 
 
-def is_archive_repo(repo, remote):
-    return repo.bare and bool_config(repo, f'remote "{remote}"', "mirror", False)
+def write_mate_archive(git_dir, worktree):
+    with open(mate_archive_path(git_dir), "w", encoding="utf-8") as stream:
+        stream.write(f"worktree = {os.path.abspath(worktree)}\n")
+        stream.write(f"time = {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
 
-def archive(path, remote, clean=False, force=False):
+def read_mate_archive(git_dir):
+    path = mate_archive_path(git_dir)
+    if not os.path.isfile(path):
+        return {}
+    metadata = {}
+    with open(path, "r", encoding="utf-8") as stream:
+        for line in stream:
+            if "=" not in line or line.lstrip().startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            metadata[key.strip()] = value.strip()
+    return metadata
+
+
+def remove_mate_archive(git_dir):
+    path = mate_archive_path(git_dir)
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def write_clone_config_archive(git_dir, repo):
+    path = archive_config_path(os.path.join(git_dir, "config"))
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write("[core]\n\trepositoryformatversion = 0\n\tbare = false\n")
+        reader = repo.config_reader()
+        for remote in repo.remotes:
+            section = f'remote "{remote.name}"'
+            stream.write(f"\n[{section}]\n")
+            try:
+                url = reader.get_value(section, "url")
+                stream.write(f"\turl = {url}\n")
+            except Exception:
+                pass
+            stream.write(f"\tfetch = +refs/heads/*:refs/remotes/{remote.name}/*\n")
+
+
+def archive(path, clean=False, force=False):
     path = os.path.normpath(os.path.abspath(path))
     repo = repo_from_worktree(path)
     if has_worktree_files(repo) and repo.is_dirty(untracked_files=True):
         raise RuntimeError("Repository has uncommitted or untracked changes")
-
-    remote = resolve_remote(repo, remote)
 
     if clean:
         ignored = ignored_files(repo)
@@ -240,34 +217,50 @@ def archive(path, remote, clean=False, force=False):
 
     git_dir = repo.git_dir
     backup = save_config_archive(git_dir)
+    write_mate_archive(git_dir, path)
 
     if clean:
         cprint("Remove working directory files", "green")
         remove_worktree(repo.working_dir, git_dir)
 
-    set_archive_config(repo, remote)
+    set_archive_config(repo)
 
     cprint(f"Archive conversion done: {git_dir}", "green")
     cprint(f"Config archive: {backup}", "green")
     return 0
 
 
-def restore_here(source, remote, branch):
+def clone(url, directory=None):
+    url_path = url.rstrip("/").replace("\\", "/")
+    name = url_path.rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    if not name and not directory:
+        raise RuntimeError(f"Cannot infer target directory from URL: {url}")
+
+    target = os.path.abspath(directory or os.path.join(os.getcwd(), name))
+    if os.path.exists(target) and os.listdir(target):
+        raise RuntimeError(f"Target directory is not empty: {target}")
+    os.makedirs(target, exist_ok=True)
+    git_dir = os.path.join(target, ".git")
+    cprint(f"Clone archive {url} -> {git_dir}", "green")
+    repo = git.Repo.clone_from(url, git_dir, mirror=True)
+    write_clone_config_archive(git_dir, repo)
+    write_mate_archive(git_dir, target)
+    cprint(f"Archive clone done: {git_dir}", "green")
+    return 0
+
+
+def restore_here(source, branch):
     source = os.path.normpath(os.path.abspath(source))
     repo = repo_from_git_dir(source)
-    remote = resolve_remote(repo, remote)
-    if not is_archive_repo(repo, remote):
-        raise RuntimeError(f"Expected a bare mirror repository: {source}")
+    if not is_archive_repo(repo):
+        raise RuntimeError(f"Expected an archive repository with config.archive: {source}")
     if os.path.basename(source) != ".git":
         raise RuntimeError("--here restore requires --path to point to a .git directory")
 
-    backup = restore_config_archive(repo.git_dir)
-    if backup:
-        cprint(f"Config backup: {backup}", "green")
-    else:
-        backup = backup_config(repo.git_dir)
-        set_worktree_config(repo, remote)
-        cprint(f"Config backup: {backup}", "green")
+    restore_config_archive(repo.git_dir)
+    remove_mate_archive(repo.git_dir)
 
     worktree = os.path.dirname(repo.git_dir)
     branch = resolve_checkout_branch(repo, branch)
@@ -280,21 +273,24 @@ def restore_here(source, remote, branch):
     return 0
 
 
-def restore(source, target, remote, branch, here=False):
+def restore(source, target, branch, here=False):
     source = os.path.normpath(os.path.abspath(source))
     source, is_parent_dir = resolve_source_git_dir(source)
 
     if here or (is_parent_dir and not target):
         if is_parent_dir and not here:
             cprint(f"Using --here: in-place restore of {source}", "yellow")
-        return restore_here(source, remote, branch)
+        return restore_here(source, branch)
 
     repo = repo_from_git_dir(source)
-    remote = resolve_remote(repo, remote)
-    if not is_archive_repo(repo, remote):
-        raise RuntimeError(f"Expected a bare mirror repository: {source}")
+    if not is_archive_repo(repo):
+        raise RuntimeError(f"Expected an archive repository with config.archive: {source}")
 
-    target = os.path.normpath(os.path.abspath(target or derive_target(source, repo, remote)))
+    metadata = read_mate_archive(repo.git_dir)
+    if not target and not here and not is_parent_dir and metadata.get("worktree"):
+        return restore_here(source, branch)
+
+    target = os.path.normpath(os.path.abspath(target or derive_target(source)))
     ensure_empty_target(target)
 
     target_git = os.path.join(target, ".git")
@@ -305,13 +301,8 @@ def restore(source, target, remote, branch, here=False):
     shutil.move(repo.git_dir, target_git)
 
     restored = git.Repo(target_git)
-    backup = restore_config_archive(target_git)
-    if backup:
-        cprint(f"Config backup: {backup}", "green")
-    else:
-        backup = backup_config(target_git)
-        set_worktree_config(restored, remote)
-        cprint(f"Config backup: {backup}", "green")
+    restore_config_archive(target_git)
+    remove_mate_archive(target_git)
 
     branch = resolve_checkout_branch(restored, branch)
     if branch:
@@ -329,10 +320,11 @@ def main():
         description="Convert Git repositories between normal and archive mirror layouts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("mode", choices=["archive", "restore"], help="operation mode")
+    parser.add_argument("mode", choices=["archive", "clone", "restore"], help="operation mode")
+    parser.add_argument("url", nargs="?", help="repository URL for clone mode")
+    parser.add_argument("directory", nargs="?", help="target directory for clone mode")
     parser.add_argument("--path", default=os.getcwd(), help="repository path")
     parser.add_argument("--name", help="target normal repository directory for --restore")
-    parser.add_argument("--remote", default=None, help="remote name")
     parser.add_argument(
         "--checkout",
         nargs="?",
@@ -370,15 +362,27 @@ def main():
                 raise RuntimeError("--here is only valid with restore mode")
             if not args.clean and args.force:
                 cprint("Warning: --force is only valid with --clean", "yellow")
-            return archive(args.path, args.remote, clean=args.clean, force=args.force)
+            if args.url or args.directory:
+                raise RuntimeError("URL and directory are only valid with clone mode")
+            return archive(args.path, clean=args.clean, force=args.force)
+        
+        if args.mode == "clone":
+            if not args.url:
+                raise RuntimeError("clone requires a repository URL")
+            if args.path != os.getcwd() or args.name or args.checkout is not None or args.here or args.clean or args.force:
+                raise RuntimeError("clone accepts only URL and optional directory")
+            return clone(args.url, args.directory)
+        
         if args.mode == "restore":
+            if args.url or args.directory:
+                raise RuntimeError("URL and directory are only valid with clone mode")
             if args.clean:
                 raise RuntimeError("--clean is only valid with archive mode")
             if args.force:
                 cprint("Warning: --force is only valid with archive --clean", "yellow")
             if args.here and args.name:
                 raise RuntimeError("--name cannot be used with --here")
-            return restore(args.path, args.name, args.remote, args.checkout, args.here)
+            return restore(args.path, args.name, args.checkout, args.here)
     except Exception as e:
         cprint(f"Error: {e}", "red", file=sys.stderr)
         return 1

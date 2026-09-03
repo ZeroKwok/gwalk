@@ -12,9 +12,10 @@ The goal is backup/storage:
 CLI:
 
 ```bash
-garchive archive [--path PATH] [--remote REMOTE] [--clean] [--force]
-garchive restore [--path PATH] [--remote REMOTE] [--checkout [BRANCH]] [--name TARGET]
-garchive restore [--path PATH] [--remote REMOTE] [--checkout [BRANCH]] --here
+garchive archive [--path PATH] [--clean] [--force]
+garchive restore [--path PATH] [--checkout [BRANCH]] [--name TARGET]
+garchive restore [--path PATH] [--checkout [BRANCH]] --here
+garchive clone URL [DIR]
 ```
 
 - `archive` / `restore` is a required positional argument.
@@ -36,14 +37,6 @@ If `--path` is a parent directory with a real `.git` directory (not a `gitdir` f
 
 - `--name TARGET` takes precedence: it forces the move-out restore even for a parent directory path.
 - If the parent directory's `.git` is a file (a `gitdir` link, i.e. a linked worktree or submodule), `restore` rejects it and asks for the actual Git directory, because worktrees are not supported.
-
-## Remote Selection
-
-If `--remote` is omitted:
-
-- If the repository has exactly one remote, use it.
-- If the repository has multiple remotes and one is named `origin`, use `origin`.
-- Otherwise, fail and ask the user to pass `--remote`.
 
 ## Archive
 
@@ -74,6 +67,8 @@ Conversion updates config:
     fetch = +refs/*:refs/*
 ```
 
+All configured remotes are marked as mirrors. `mate.archive` records the worktree path and archive timestamp.
+
 The worktree files are not deleted or moved.
 
 ### Clean Working Directory
@@ -93,24 +88,22 @@ SomeDir/.git
 SomeDir.git
 ```
 
+`garchive clone URL [DIR]` creates this archive layout directly. If DIR is omitted, the directory name is derived from the URL.
+
 The source must be:
 
 - `core.bare = true`
-- `remote.<remote>.mirror = true`
+- `config.archive` exists
 
-Before restore modifies config, it restores the original config from the archive marker if present:
+Before restore modifies config, it restores the original config from the archive marker:
 
 ```text
 config.archive -> config
 ```
 
-The pre-restore (archive) config is kept as a safety backup:
+If `config.archive` is absent, restore is rejected. Historical archive layouts are not supported.
 
-```text
-config -> config.backup.<YYYYmmddHHMMSS>
-```
-
-If `config.archive` is absent (e.g. a repository archived by an older version), restore falls back to rewriting the config in place.
+`mate.archive` records the original worktree path and archive timestamp. When restoring from a `.git` directory without `--name`, the recorded worktree path allows in-place restore. `mate.archive` is removed after restore.
 
 Default restore creates or uses an empty target directory, moves the archive Git directory to:
 
@@ -118,7 +111,7 @@ Default restore creates or uses an empty target directory, moves the archive Git
 TARGET/.git
 ```
 
-Then it updates config:
+The restored `config.archive` already contains the worktree configuration:
 
 ```ini
 [core]
@@ -139,7 +132,7 @@ If `--checkout` is not provided, restore does not checkout files.
 
 - `--path` must point to an archive `.git` directory, such as `SomeDir/.git`.
 - The Git directory is not moved.
-- The same config restore rules apply (prefer `config.archive`, otherwise rewrite in place).
+- Restore always moves `config.archive` to `config`; there is no configuration rewrite fallback.
 - If `--checkout BRANCH` is provided, the parent directory of `.git` is checked out and reset to that branch.
 - If `--checkout` is provided without a branch, the current `HEAD` branch is checked out.
 - If `--checkout` is omitted, existing worktree files are left as-is.
@@ -155,13 +148,13 @@ If `--name TARGET` is provided, use it.
 
 If `--name` is omitted:
 
-- For source paths ending in `.git`, strip that suffix:
+- For source paths ending in `.git`, strip that suffix when no metadata is available:
 
   ```text
   FoneTool.git -> FoneTool
   ```
 
-- For source paths named `.git`, derive the target from `remote.<remote>.url` and place it next to the parent worktree directory.
+- For source paths named `.git`, use the worktree path recorded in `mate.archive` when available.
 
 - If no target can be inferred, fail and ask the user to pass `TARGET`.
 
@@ -169,16 +162,16 @@ Target must not exist or must be empty.
 
 ## Safety Rules
 
-- Config is backed up before every conversion direction.
+- `archive` saves the original config as `config.archive`.
 - `archive` refuses dirty repositories.
 - `restore` refuses non-archive sources.
 - `restore` refuses non-empty target directories.
 - `archive --clean` asks for confirmation when ignored files exist, unless `--force`.
 - `restore` rejects parent directory paths whose `.git` is a `gitdir` file (worktree unsupported).
-- `restore` prefers `config.archive` and falls back to in-place config rewrite when absent.
+- `restore` requires `config.archive` and removes `mate.archive` after restoring it.
 - The tool prints each important operation before executing it:
-  - config archive/backup
-  - config mutation
+  - config archive
+  - config restoration
   - git directory move
   - optional checkout
 
@@ -193,13 +186,14 @@ Covered scenarios:
 - Restore without `--checkout` does not checkout files.
 - Restore with `--checkout BRANCH` checks out files.
 - Restore with `--checkout` (no branch) checks out the current `HEAD` branch.
-- Target inference from `*.git` and remote URL.
+- Target inference from `mate.archive` and `*.git` paths.
 - Non-empty target is rejected.
 - Non-archive source is rejected.
-- Remote auto-detection: single remote, `origin` among multiple, and failure without `origin`.
+- Archive clone creates `config.archive` and `mate.archive` metadata.
 - `--clean` removes working directory files.
 - `--clean` prompts when ignored files exist; `--force` skips the prompt.
 - `restore` auto-enables in-place restore for a parent directory with a real `.git` directory.
 - `restore` honors `--name` (move-out) even for a parent directory path.
 - `restore` rejects a parent directory whose `.git` is a `gitdir` file.
 - `archive` writes a fixed `config.archive` marker; `restore` restores it and preserves original config values.
+- `clone` creates a mirror archive with worktree-style `config.archive` and `mate.archive` metadata.
