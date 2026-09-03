@@ -96,3 +96,13 @@ def test_gl_fetch_failure_warns_but_pull_exit_code_wins(tmp_path, monkeypatch):
 
     assert run_main(monkeypatch, ["gl"], tmp_path) == 3
     assert commands == ["git fetch origin", "git pull origin main "]
+
+
+def test_gl_updates_bare_repository_without_pull(tmp_path, monkeypatch):
+    repo = git.Repo.init(tmp_path, bare=True)
+    commands = []
+
+    monkeypatch.setattr(gl.gwalk.RepoHandler, "execute", lambda cmd: commands.append(cmd) or 0)
+
+    assert run_main(monkeypatch, ["gl"], tmp_path) == 0
+    assert commands == ["git remote update"]

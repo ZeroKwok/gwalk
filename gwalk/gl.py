@@ -29,11 +29,17 @@ This tool helps streamline common Git operations by:
                             '(equivalent to git pull --rebase)')
     args = parser.parse_args()
 
-    if not gwalk.RepoWalk.isRepo(os.getcwd()):
+    try:
+        repo = gwalk.git.Repo(os.getcwd(), search_parent_directories=True)
+    except (gwalk.git.exc.InvalidGitRepositoryError, gwalk.git.exc.NoSuchPathError):
         gwalk.cprint(f'This is not an valid git repository.', 'red')
         sys.exit(1)
 
-    repo   = gwalk.git.Repo(os.getcwd(), search_parent_directories=True)
+    if repo.bare:
+        cmd = 'git remote update'
+        gwalk.cprint(f'> {cmd}', 'green')
+        sys.exit(gwalk.RepoHandler.execute(cmd))
+
     branch = repo.active_branch.name
 
     if not args.quick:
