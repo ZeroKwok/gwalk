@@ -62,7 +62,19 @@ class TestRepoWalk:
     def test_repo_type_supports_normal_and_submodule_style_git_markers(self):
         assert RepoWalk.repoTypeByFiles([".git"], []) == 1
         assert RepoWalk.repoTypeByFiles([], [".git"]) == 2
+        assert RepoWalk.repoTypeByFiles(["objects", "refs"], ["HEAD", "config"]) == 3
         assert RepoWalk.repoTypeByFiles([], []) == 0
+
+    def test_recursive_walk_finds_bare_repository(self, tmp_path):
+        bare = tmp_path / "mirror.git"
+        git.Repo.init(bare, bare=True)
+
+        walked = {
+            os.path.relpath(path, tmp_path).replace("\\", "/")
+            for path in RepoWalk(str(tmp_path), recursive=True)
+        }
+
+        assert "mirror.git" in walked
 
     def test_is_repo_detects_repo_from_child_directory(self, tmp_path):
         make_repo(tmp_path)
@@ -116,6 +128,32 @@ class TestRepoStatus:
         repo = make_repo(tmp_path)
 
         assert RepoStatus(str(tmp_path)).describe() == repo.head.commit.hexsha[:7]
+
+    @pytest.mark.parametrize(
+        ("archive", "mirror", "expected"),
+        [(True, True, "archive mirror"), (False, True, "mirror"), (False, False, "bare")],
+    )
+    def test_bare_repo_status_is_clean_and_has_type(self, tmp_path, archive, mirror, expected):
+        repo = git.Repo.init(tmp_path, bare=True)
+        if mirror:
+            with repo.config_writer() as config:
+                config.set_value('remote "origin"', "url", "https://example.com/source.git")
+                config.set_value('remote "origin"', "mirror", "true")
+        if archive:
+            (tmp_path / "config.archive").write_text("[core]\nbare = false\n", encoding="utf-8")
+
+        status = RepoStatus(str(tmp_path)).load()
+        assert status.match("clean") is True
+        assert status.match("dirty") is False
+        assert status.bare_type() == expected
+
+    def test_bare_repo_display_uses_git_directory(self, tmp_path, capsys):
+        repo = git.Repo.init(tmp_path, bare=True)
+        with repo.config_writer() as config:
+            config.set_value('remote "origin"', "mirror", "true")
+
+        RepoStatus(str(tmp_path)).load().display(str(tmp_path.parent), "brief")
+        assert "Clean (mirror)" in capsys.readouterr().out
 
 
 class TestRepoHandler:

@@ -41,8 +41,12 @@ Repository root detection:
 
 - A directory containing `.git` **as a directory** is treated as a normal Git repository.
 - A directory containing `.git` **as a file** is treated as a submodule-style repository.
+- A directory containing `objects`, `refs`, `HEAD`, and `config` is treated as a bare repository.
+- Git metadata directories are not recursively scanned as separate repositories.
 
-`RepoName(working_dir, root)` displays repository paths relative to the search root. If the repository is the root itself, the basename is shown.
+`RepoName(directory, root)` displays repository paths relative to the search root. If the repository is the root itself, the basename is shown.
+
+For bare repositories, Git operations run from the repository's git directory because the parent directory has no work tree. Bare repositories are displayed as `Clean (archive mirror)`, `Clean (mirror)`, or `Clean (bare)`.
 
 ## Status Filtering
 
@@ -53,6 +57,8 @@ Status is loaded with:
 ```bash
 git status --porcelain=1 --untracked-files=normal
 ```
+
+Bare repositories have no work tree, so status loading is skipped and they are treated as clean.
 
 Filter choices:
 

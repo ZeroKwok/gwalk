@@ -112,6 +112,7 @@ class RepoWalk:
             for root, dirs, files in os.walk(self.directory):
                 if RepoWalk.repoTypeByFiles(dirs, files) != 0:
                     yield root
+                dirs[:] = [d for d in dirs if d not in ['.git', '.vs', '.vscode']]
         else:
             for root, dirs, files in os.walk(self.directory):
                 if RepoWalk.isRepoRoot(root):
@@ -125,15 +126,14 @@ class RepoWalk:
                 break
 
     def repoTypeByFiles(dirs, files) -> int:
-        '''0 None, 1 Normal, 2 Submodule'''
+        '''0 None, 1 Normal, 2 Submodule, 3 Bare'''
         if '.git' in dirs:
             return 1
         if '.git' in files:
             return 2
+        if 'objects' in dirs and 'refs' in dirs and 'HEAD' in files and 'config' in files:
+            return 3
 
-        # TODO
-        # Check the config has bare = true
-        # Check the config has submodule = true
         return 0
 
     def isRepoRoot(directory) -> int:
@@ -155,8 +155,32 @@ class RepoWalk:
 # - [How to manage git repositories with Python](https://linuxconfig.org/how-to-manage-git-repositories-with-python)
 class RepoStatus:
     def __init__(self, directory:str):
+        self.directory = directory
         self.repo = git.Repo(directory, search_parent_directories=True)
         self.status = []
+
+    def operating_dir(self):
+        return self.repo.working_dir or self.repo.git_dir
+
+    def bare_type(self):
+        if not self.repo.bare:
+            return None
+
+        if os.path.isfile(os.path.join(self.repo.git_dir, 'config.archive')):
+            return 'archive mirror'
+
+        try:
+            reader = self.repo.config_reader()
+            for remote in self.repo.remotes:
+                section = f'remote "{remote.name}"'
+                try:
+                    if reader.get_value(section, 'mirror') in (True, 'true', 'True', '1', 1):
+                        return 'mirror'
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return 'bare'
 
     class AssetState:
         def __init__(self, x = '', y = '', path = ''):
@@ -268,6 +292,9 @@ class RepoStatus:
         '''
         self.status = []
 
+        if self.repo.bare:
+            return self
+
         # porcelain       易于解析的简单的输出, 类似-s(Short Format)
         # untracked_files 包含详细的未跟踪文件列表
         #   - normal - Shows untracked files and directories.
@@ -320,8 +347,7 @@ class RepoStatus:
         return False
 
     def display(self, root:str, level:str='brief'):
-        dir = self.repo.working_dir
-        dir = RepoName(self.repo.working_dir, root)
+        dir = RepoName(self.directory, root)
 
         if level == 'none':
             cprint(dir)
@@ -329,6 +355,11 @@ class RepoStatus:
 
         cprint(dir, 'green', end=' ')
         cprint(f'({self.active_branch_name()})', 'cyan')
+
+        bare_type = self.bare_type()
+        if bare_type:
+            cprint(f'  Clean ({bare_type})', 'white')
+            return
 
         if level == 'brief':
             modified = []
@@ -347,7 +378,7 @@ class RepoStatus:
         else:
             lastcwd = os.getcwd()
             try:
-                os.chdir(self.repo.working_dir)
+                os.chdir(self.operating_dir())
                 if level == 'normal':
                     os.system('git status -s --untracked-files=normal --ignore-submodules=all')
                 else:
@@ -377,7 +408,10 @@ class RepoHandler:
             raise RuntimeError('Error: do not execute command in detached HEAD state.')
             
         if '{RepositoryName}' in cmd:
-            cmd = cmd.replace('{RepositoryName}', os.path.basename(repo.working_dir))
+            directory = repo.working_dir
+            if directory is None:
+                directory = repo.git_dir if os.path.basename(repo.git_dir) != '.git' else os.path.dirname(repo.git_dir)
+            cmd = cmd.replace('{RepositoryName}', os.path.basename(directory))
         if '{cwd}' in cmd:
             cmd = cmd.replace('{cwd}', args.directory)
         return cmd
@@ -416,17 +450,17 @@ export PS1="{title}"
 
                 command = f'bash --rcfile {rcfile}' if rcfile else 'bash --noprofile --norc'
                 os.environ['PS1'] = title
-                os.chdir(repo.working_dir)
+                os.chdir(repo.working_dir or repo.git_dir)
                 os.system(command)
 
             elif args.action == 'gui':
-                os.chdir(repo.working_dir)
+                os.chdir(repo.working_dir or repo.git_dir)
                 os.system('git gui')
 
             elif args.action == 'run':
                 cmd = self._format_cmd(repo, args)
 
-                os.chdir(repo.working_dir)
+                os.chdir(repo.working_dir or repo.git_dir)
 
                 result = RepoHandler.Result()
                 result.repo = repo
@@ -488,7 +522,7 @@ class RepoAsyncHandler:
             try:
                 process = await asyncio.create_subprocess_shell(
                     cmd,
-                    cwd=repo.working_dir,
+                    cwd=repo.working_dir or repo.git_dir,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
