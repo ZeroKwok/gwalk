@@ -545,8 +545,11 @@ def clone_mode_repository(mode, remotes, target):
     for remote in remotes:
         try:
             cprint(f"Clone {target} from {remote} ({mode})", "green")
+            if mode == "archive":
+                garchive.clone(remote, target)
+                return git.Repo(archive_git_dir(target))
             args = ["clone"]
-            if mode == "archive" or mode == "mirror":
+            if mode == "mirror":
                 args.append("--mirror")
             elif mode == "bare":
                 args.append("--bare")
@@ -655,7 +658,7 @@ def deploy_manifest(
                 if mode == "archive" and checkout_archive:
                     ensure_checkout_target(repository, branch, commit, checkout_to_commit)
                     if is_archive_directory(target, remote_name):
-                        garchive.restore(archive_git_dir(target), None, remote_name or "origin", branch, here=True)
+                        garchive.restore(archive_git_dir(target), None, branch, here=True)
                     repo = git.Repo(target)
                     if checkout_to_commit:
                         checkout_commit(repo, commit)

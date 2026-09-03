@@ -255,7 +255,7 @@ For each repository entry:
 Repository modes:
 
 - Missing `mode` deploys a normal worktree repository using the rules above.
-- `mode: 'archive'` creates or updates `<target>/.git` with `git clone --mirror` style storage. By default it does not checkout files and does not run `post`.
+- `mode: 'archive'` creates or updates `<target>/.git` with `garchive clone` archive storage, including `config.archive` and `mate.archive`. By default it does not checkout files and does not run `post`.
 - `mode: 'mirror'` creates or updates `<target>` as a bare mirror repository. It does not checkout files and does not run `post`.
 - `mode: 'bare'` creates or updates `<target>` as a bare non-mirror repository. It does not checkout files and does not run `post`.
 
