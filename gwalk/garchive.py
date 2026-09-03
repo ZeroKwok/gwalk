@@ -164,7 +164,8 @@ def is_archive_repo(repo):
 
 def write_mate_archive(git_dir, worktree):
     with open(mate_archive_path(git_dir), "w", encoding="utf-8") as stream:
-        stream.write(f"worktree = {os.path.abspath(worktree)}\n")
+        worktree = os.path.abspath(worktree) if worktree else ""
+        stream.write(f"worktree = {worktree}\n")
         stream.write(f"time = {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
 
@@ -217,7 +218,8 @@ def archive(path, clean=False, force=False):
 
     git_dir = repo.git_dir
     backup = save_config_archive(git_dir)
-    write_mate_archive(git_dir, path)
+    metadata_worktree = "" if os.path.basename(path) == ".git" else path
+    write_mate_archive(git_dir, metadata_worktree)
 
     if clean:
         cprint("Remove working directory files", "green")
@@ -286,8 +288,7 @@ def restore(source, target, branch, here=False):
     if not is_archive_repo(repo):
         raise RuntimeError(f"Expected an archive repository with config.archive: {source}")
 
-    metadata = read_mate_archive(repo.git_dir)
-    if not target and not here and not is_parent_dir and metadata.get("worktree"):
+    if not target and not here and not is_parent_dir and os.path.basename(source) == ".git":
         return restore_here(source, branch)
 
     target = os.path.normpath(os.path.abspath(target or derive_target(source)))

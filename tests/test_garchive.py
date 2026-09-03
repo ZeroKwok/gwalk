@@ -71,6 +71,15 @@ def test_to_archive_continues_when_worktree_already_removed(tmp_path):
     assert archived.config_reader().get_value('remote "origin"', "mirror") is True
 
 
+def test_archive_from_git_directory_leaves_worktree_metadata_empty(tmp_path):
+    repo = make_repo(tmp_path)
+
+    assert garchive.archive(str(tmp_path / ".git")) == 0
+
+    metadata = (tmp_path / ".git" / "mate.archive").read_text(encoding="utf-8")
+    assert "worktree = \n" in metadata
+
+
 def test_restore_moves_git_dir_to_target_and_updates_config(tmp_path):
     source = tmp_path / "SomeDir"
     target = tmp_path / "Restored"
@@ -199,6 +208,15 @@ def test_restore_derives_target_from_remote_url_when_source_is_dot_git(tmp_path)
 
     garchive.restore(str(source / ".git"), None, None)
 
+    assert git.Repo(source).bare == False
+
+
+def test_restore_from_git_directory_uses_parent_even_without_metadata(tmp_path):
+    source = tmp_path / "SomeDir"
+    make_archive_git_dir(source)
+    (source / ".git" / "mate.archive").unlink()
+
+    assert garchive.restore(str(source / ".git"), None, None) == 0
     assert git.Repo(source).bare == False
 
 
