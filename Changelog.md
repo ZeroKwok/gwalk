@@ -2,6 +2,9 @@
 
 ## v0.3.4
 
+修复 `gwalk` 遇到 bare、mirror 和 `garchive` archive mirror 仓库时执行 `git status` 报错的问题，并显示对应的 clean 类型。
+新增 `garchive clone`，为 gdeploy 创建带 `config.archive` 和 `mate.archive` 的 archive mirror。
+`garchive restore` 现要求 `config.archive`，不再兼容历史归档，也不再备份当前 config。
 优化 `garchive` 使用位置参数 `archive`/`restore` 替代 `--archive`/`--restore`。
 添加 `garchive` 的 `--remote` 自动推断：单一 remote 或含 `origin` 时自动选择。
 添加 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
