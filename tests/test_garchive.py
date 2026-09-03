@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 
@@ -78,6 +79,7 @@ def test_archive_from_git_directory_leaves_worktree_metadata_empty(tmp_path):
 
     metadata = (tmp_path / ".git" / "mate.archive").read_text(encoding="utf-8")
     assert "worktree = \n" in metadata
+    assert re.search(r"^time = \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$", metadata, re.MULTILINE)
 
 
 def test_restore_moves_git_dir_to_target_and_updates_config(tmp_path):

@@ -166,7 +166,7 @@ def write_mate_archive(git_dir, worktree):
     with open(mate_archive_path(git_dir), "w", encoding="utf-8") as stream:
         worktree = os.path.abspath(worktree) if worktree else ""
         stream.write(f"worktree = {worktree}\n")
-        stream.write(f"time = {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        stream.write(f"time = {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %z')}\n")
 
 
 def read_mate_archive(git_dir):
