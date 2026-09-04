@@ -300,12 +300,12 @@ class RepoStatus:
         #   - normal - Shows untracked files and directories.
         #   - all - Also shows individual files in untracked directories.
         #   - no - Show no untracked files.
-        proc = self.repo.git.status(porcelain='1', untracked_files='normal', as_process=True)
+        output = self.repo.git.status(porcelain='1', untracked_files='normal')
 
         # XY PATH
         # XY ORIG_PATH -> PATH
-        for line in proc.stdout:
-            line = line.decode('utf-8').rstrip('\n')
+        for line in output.splitlines():
+            line = line.rstrip('\n')
             if len(line) == 0:
                 continue
 
@@ -323,7 +323,6 @@ class RepoStatus:
             elif asset.PATH[0] == '"' and asset.PATH[-1] == '"':
                 asset.PATH = asset.PATH[1:-2]
             self.status.append(asset)
-        proc.wait()
         return self
 
     def match(self, condition:str='dirty') -> bool:
