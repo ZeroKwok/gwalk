@@ -21,9 +21,11 @@ This tool helps streamline common Git operations by:
 - Pulling changes from the default remote (origin or first available) to the current branch''',
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('-q', '--quick', action='store_true',
-                       help='quick mode: skip fetching from remote repositories\n'
-                            'and only perform git pull')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('-q', '--quick', action='store_true',
+                       help='quick mode: skip fetching and only perform git pull')
+    modes.add_argument('-f', '--fetch', action='store_true',
+                       help='fetch all remotes and run maintenance, without pull')
     parser.add_argument('--rebase', action='store_true',
                        help='use rebase instead of merge when pulling\n'
                             '(equivalent to git pull --rebase)')
@@ -35,19 +37,15 @@ This tool helps streamline common Git operations by:
         gwalk.cprint(f'This is not an valid git repository.', 'red')
         sys.exit(1)
 
-    if repo.bare:
-        cmd = 'git remote update'
-        gwalk.cprint(f'> {cmd}', 'green')
-        sys.exit(gwalk.RepoHandler.execute(cmd))
+    if args.quick:
+        if repo.bare:
+            sys.exit(0)
+    else:
+        fetch_code = fetch()
+        if args.fetch or repo.bare:
+            sys.exit(fetch_code)
 
     branch = repo.active_branch.name
-
-    if not args.quick:
-        for remote in repo.remotes:
-            cmd = f'git fetch {remote.name}'
-            gwalk.cprint(f'> {cmd}', 'green')
-            if gwalk.RepoHandler.execute(cmd) != 0:
-                gwalk.cprint(f'> Warning: remote "{remote.name}" fetch failed', 'yellow')
 
     remote = 'origin'
     if not remote in repo.remotes:
@@ -61,6 +59,24 @@ This tool helps streamline common Git operations by:
     cmd = f'git pull {remote} {branch} {rebase}'
     gwalk.cprint(f'> {cmd}', 'green')
     sys.exit(gwalk.RepoHandler.execute(cmd))
+
+
+def fetch():
+    """Fetch all remotes, then run maintenance synchronously."""
+    # Fetch can otherwise start detached maintenance/repack in the background.
+    # Keep both operations in the foreground to avoid Windows pack-file races.
+    commands = [
+        'git fetch --all --no-auto-maintenance',
+        'git maintenance run --auto --no-quiet',
+    ]
+    code = 0
+    for cmd in commands:
+        gwalk.cprint(f'> {cmd}', 'green')
+        result = gwalk.RepoHandler.execute(cmd)
+        if result != 0:
+            code = code or result
+            gwalk.cprint(f'> Warning: {cmd} failed', 'yellow')
+    return code
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@
 
 ## v0.3.4
 
+为 `gl` 增加 `-f/--fetch` 安全抓取模式，禁用 fetch 的后台 maintenance，并在前台主动执行维护；bare/archive mirror 仓库非 quick 模式统一使用该流程。
 修复 `gwalk` 遇到 bare、mirror 和 `garchive` archive mirror 仓库时执行 `git status` 报错的问题，并显示对应的 clean 类型。
 新增 `garchive clone`，为 gdeploy 创建带 `config.archive` 和 `mate.archive` 的 archive mirror。
 `garchive restore` 现要求 `config.archive`，不再兼容历史归档，也不再备份当前 config。

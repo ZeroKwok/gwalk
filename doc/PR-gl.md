@@ -22,6 +22,7 @@ Examples:
 ```bash
 gl
 gl -q
+gl -f
 gl --rebase
 ```
 
@@ -43,17 +44,29 @@ Detached HEAD is not specially handled; requesting `repo.active_branch.name` may
 
 Default behavior fetches every configured remote before pulling.
 
-For each remote:
+Normal mode uses one aggregate fetch:
 
 ```bash
-git fetch <remote-name>
+git fetch --all --no-auto-maintenance
+git maintenance run --auto --no-quiet
 ```
 
-If a fetch command fails:
+If fetch or maintenance fails:
 
-- `gl` prints a warning for that remote.
-- It continues fetching remaining remotes.
-- It still proceeds to the final pull.
+- `gl` prints a warning.
+- It still proceeds to the final pull unless `--fetch` was specified.
+
+Safe aggregate fetch mode:
+
+```bash
+gl -f
+gl --fetch
+```
+
+This runs `git fetch --all --no-auto-maintenance`, followed by
+`git maintenance run --auto --no-quiet` in the foreground. Git may otherwise
+start detached background maintenance after fetch. On Windows, that process
+can compete with later Git commands for `.pack` and `.idx` files.
 
 Quick mode:
 
@@ -63,6 +76,13 @@ gl --quick
 ```
 
 Quick mode skips all fetch commands and goes directly to pull.
+
+`--fetch` is fetch-only: it performs the aggregate fetch and foreground
+maintenance, then exits without pulling.
+
+For bare repositories, pull is unsupported because there is no work tree. In
+non-quick mode, `gl` performs the safe aggregate fetch and foreground
+maintenance, then exits without pulling. In quick mode, it performs no update.
 
 ## Pull Remote Selection
 
@@ -93,6 +113,9 @@ git pull <remote> <branch> --rebase
 The pull command is printed before execution.
 
 `gl` exits with the pull command's exit code.
+
+For bare repositories, `gl` exits with the fetch or maintenance failure status,
+or `0` when both complete successfully.
 
 ## Error Handling
 
