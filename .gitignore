@@ -1,5 +1,6 @@
 __pycache__
 .vscode
+.agents/sessions
 *.egg-info
 tests/simples
 build
