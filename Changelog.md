@@ -2,18 +2,15 @@
 
 ## v0.3.4
 
-为 `gl` 增加 `-f/--fetch` 安全抓取模式，禁用 fetch 的后台 maintenance，并在前台主动执行维护；bare/archive mirror 仓库非 quick 模式统一使用该流程。
-`gl -fq` 仅执行 fetch，跳过前台 maintenance，规避 Windows 下 cruft gc 删除仍被 mmap 的 pack 文件时的 unlink 失败。
 修复 `gwalk` 遇到 bare、mirror 和 `garchive` archive mirror 仓库时执行 `git status` 报错的问题，并显示对应的 clean 类型。
+新增 `gl -f/--fetch` 安全抓取模式，禁用 fetch 的后台 maintenance，并在前台主动执行维护；bare/archive mirror 仓库非 quick 模式统一使用该流程。
 新增 `garchive clone`，为 gdeploy 创建带 `config.archive` 和 `mate.archive` 的 archive mirror。
-`garchive restore` 现要求 `config.archive`，不再兼容历史归档，也不再备份当前 config。
-优化 `garchive` 使用位置参数 `archive`/`restore` 替代 `--archive`/`--restore`。
-添加 `garchive` 的 `--remote` 自动推断：单一 remote 或含 `origin` 时自动选择。
-添加 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
+新增 `garchive archive --clean` 清理工作目录，`--force` 跳过被忽略文件的确认。
 优化 `garchive restore --path` 支持指定父目录：含真实 `.git` 目录且未指定 `--name` 时自动原地还原；`.git` 为 gitdir 文件（worktree）时报错。
-重命名 `garchive` 参数 `--branch` 为 `--checkout`。
 优化 `garchive restore --checkout` 不带分支时使用当前 `HEAD` 分支。
+优化 `garchive` 使用位置参数 `archive`/`restore` 替代 `--archive`/`--restore`。
 优化 `garchive` 使用固定 `config.archive` 归档原始 config，`restore` 检测到则还原并保留原配置。
+优化 `garchive` 参数 `--branch` 为 `--checkout`。
 
 ## v0.3.3
 
