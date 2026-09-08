@@ -77,8 +77,16 @@ gl --quick
 
 Quick mode skips all fetch commands and goes directly to pull.
 
-`--fetch` is fetch-only: it performs the aggregate fetch and foreground
-maintenance, then exits without pulling.
+Combined modes:
+
+```bash
+gl -fq
+gl --fetch --quick
+```
+
+`-fq` fetches all remotes but skips the foreground maintenance. This avoids
+the full cruft `git gc` that can fail on Windows when it deletes still-mapped
+pack files, leaving pack maintenance to a later, dedicated run.
 
 For bare repositories, pull is unsupported because there is no work tree. In
 non-quick mode, `gl` performs the safe aggregate fetch and foreground

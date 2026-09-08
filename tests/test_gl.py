@@ -73,6 +73,27 @@ def test_gl_fetch_option_fetches_all_without_detached_maintenance(tmp_path, monk
     ]
 
 
+def test_gl_fetch_quick_skips_maintenance(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path, "dev")
+    repo.create_remote("origin", str(tmp_path / "origin.git"))
+    commands = []
+
+    monkeypatch.setattr(gl.gwalk.RepoHandler, "execute", lambda cmd: commands.append(cmd) or 0)
+
+    assert run_main(monkeypatch, ["gl", "-fq"], tmp_path) == 0
+    assert commands == ["git fetch --all --no-auto-maintenance"]
+
+
+def test_gl_bare_fetch_quick_skips_maintenance(tmp_path, monkeypatch):
+    git.Repo.init(tmp_path, bare=True)
+    commands = []
+
+    monkeypatch.setattr(gl.gwalk.RepoHandler, "execute", lambda cmd: commands.append(cmd) or 0)
+
+    assert run_main(monkeypatch, ["gl", "-fq"], tmp_path) == 0
+    assert commands == ["git fetch --all --no-auto-maintenance"]
+
+
 def test_gl_rebase_adds_rebase_flag(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
     repo.create_remote("origin", str(tmp_path / "origin.git"))
