@@ -392,9 +392,29 @@ def checkout_branch(repo, branch):
         cprint(f"Warning: pull failed in {repo.working_dir}: {e}", "yellow", file=sys.stderr)
 
 
-def checkout_commit(repo, commit):
+def branch_contains_commit(repo, branch, commit):
+    try:
+        repo.git.merge_base("--is-ancestor", commit, branch)
+        return True
+    except git.exc.GitCommandError:
+        return False
+
+
+def checkout_commit(repo, commit, branch=None):
+    """Checkout the recorded commit, staying on the recorded branch if possible.
+
+    When the recorded commit is reachable from the recorded branch, reset that
+    branch to the commit instead of using a detached HEAD checkout.
+    """
     if not commit:
         return
+
+    if branch and branch in [head.name for head in repo.heads]:
+        if branch_contains_commit(repo, branch, commit):
+            repo.git.checkout(branch)
+            repo.git.reset("--hard", commit)
+            return
+
     repo.git.checkout(commit)
 
 
@@ -661,11 +681,9 @@ def deploy_manifest(
                         garchive.restore(archive_git_dir(target), None, branch, here=True)
                     repo = git.Repo(target)
                     if checkout_to_commit:
-                        checkout_commit(repo, commit)
+                        checkout_commit(repo, commit, branch)
                     update_submodules(repo)
                     should_run_post = True
-                elif checkout_to_commit and mode == "worktree":
-                    checkout_commit(repo, commit)
 
                 if should_run_post and not run_post_commands(post, target):
                     summary["post_failed"] += 1
@@ -694,7 +712,7 @@ def deploy_manifest(
                 summary["cloned"] += 1
 
             if checkout_to_commit:
-                checkout_commit(repo, commit)
+                checkout_commit(repo, commit, branch)
 
             if should_run_post and not run_post_commands(post, target):
                 summary["post_failed"] += 1
@@ -747,7 +765,7 @@ def main():
     parser.add_argument(
         "--commit",
         action="store_true",
-        help="checkout repositories to manifest commit ids after clone/update",
+        help="checkout repositories to manifest commits (detached only when the branch lacks the commit)",
     )
     parser.add_argument(
         "--checkout",

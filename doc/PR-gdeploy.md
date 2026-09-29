@@ -270,7 +270,8 @@ Commit checkout:
 
 - By default, deploy does not use the manifest `commit` field.
 - With `--commit`, deploy checks out the repository to the manifest `commit` after clone/update.
-- This may leave the repository in detached HEAD state, similar to pinning sub-repository revisions.
+- When the manifest `branch` exists and already contains the `commit`, deploy attaches to that branch and resets it to the commit, so the worktree is pinned without a detached HEAD.
+- Otherwise (no branch, branch missing, or the commit is not reachable from the branch), deploy falls back to a detached checkout, which may leave the repository in detached HEAD state.
 - If `commit` is missing, no commit checkout is performed for that repository.
 
 By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:

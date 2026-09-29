@@ -507,6 +507,85 @@ def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
     assert deployed.head.commit.hexsha == first_commit
 
 
+def test_deploy_manifest_keeps_branch_when_commit_is_ancestor(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    repo = make_repo(source, "main")
+    first_commit = repo.head.commit.hexsha
+    (source / "README.md").write_text("updated\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("second")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "commit": first_commit,
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_to_commit=True,
+    ) == 0
+
+    deployed = git.Repo(workspace / "demo")
+    assert deployed.head.commit.hexsha == first_commit
+    assert deployed.head.is_detached == False
+    assert deployed.active_branch.name == "main"
+
+
+def test_deploy_manifest_detaches_when_commit_not_on_branch(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    repo = make_repo(source, "main")
+    (source / "README.md").write_text("second\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("second")
+    orphan = repo.create_head("orphan")
+    orphan.checkout()
+    (source / "README.md").write_text("orphan\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("orphan")
+    orphan_commit = repo.head.commit.hexsha
+    repo.git.checkout("main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "commit": orphan_commit,
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace),
+        str(manifest_file),
+        checkout_to_commit=True,
+    ) == 0
+
+    deployed = git.Repo(workspace / "demo")
+    assert deployed.head.commit.hexsha == orphan_commit
+    assert deployed.head.is_detached == True
+
+
 def test_deploy_manifest_clones_archive_without_checkout_or_post(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
