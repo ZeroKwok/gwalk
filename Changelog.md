@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.5
+
+优化 `gdeploy --commit`：当清单分支包含记录的提交时，改为附着分支并 reset，避免进入游离 HEAD；仅当分支不包含该提交时回退为游离检出。
+
 ## v0.3.4
 
 修复 `gwalk` 遇到 bare、mirror 和 `garchive` archive mirror 仓库时执行 `git status` 报错的问题，并显示对应的 clean 类型。
