@@ -61,7 +61,7 @@ Top-level structure:
 Repository fields:
 
 - `path`: repository directory relative to workspace.
-- `mode`: optional repository layout. Missing means a normal worktree repository. Supported values are `archive`, `mirror`, and `bare`.
+- `mode`: optional repository layout. Missing means deploy detects the actual layout of an existing target before defaulting to a normal worktree repository. Supported values are `archive`, `mirror`, and `bare`.
 - `remote`: named remote map. Values may be a string URL or a list of URL fallbacks.
 - `branch`: optional target branch.
 - `commit`: optional target commit ID recorded by scan.
@@ -140,9 +140,11 @@ This keeps long scans visibly active when a workspace has many nested repositori
 
 Non-worktree mode detection:
 
-- `mode: 'archive'`: the repository path is a directory containing only `.git`, and that `.git` directory is a bare mirror repository.
+- `mode: 'archive'`: the repository path is a directory containing only `.git`, that `.git` directory carries a `config.archive` marker, and it is a bare mirror repository.
 - `mode: 'mirror'`: the repository path itself is a bare repository and the selected remote has `mirror = true`.
 - `mode: 'bare'`: the repository path itself is a bare repository without mirror mode.
+
+When `mode` is omitted and the target already exists, deploy detects the actual layout (`archive`, `mirror`, `bare`, or `worktree`) and applies the matching handling instead of forcing a worktree checkout.
 
 If an existing manifest entry has `mode: 'archive'` and the local repository is currently a normal worktree, scan keeps `mode: 'archive'`. This prevents a temporary checkout from changing the user's backup/deploy strategy.
 
@@ -272,6 +274,7 @@ Commit checkout:
 - With `--commit`, deploy checks out the repository to the manifest `commit` after clone/update.
 - When the manifest `branch` exists and already contains the `commit`, deploy attaches to that branch and resets it to the commit, so the worktree is pinned without a detached HEAD.
 - Otherwise (no branch, branch missing, or the commit is not reachable from the branch), deploy falls back to a detached checkout, which may leave the repository in detached HEAD state.
+- If the recorded `commit` no longer exists on the remote (for example the manifest snapshot refers to a commit dropped by a rewritten branch), deploy prints a warning and keeps the branch head instead of failing.
 - If `commit` is missing, no commit checkout is performed for that repository.
 
 By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:

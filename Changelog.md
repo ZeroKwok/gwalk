@@ -3,6 +3,9 @@
 ## v0.3.5
 
 优化 `gdeploy --commit`：当清单分支包含记录的提交时，改为附着分支并 reset，避免进入游离 HEAD；仅当分支不包含该提交时回退为游离检出。
+优化 `gdeploy`：清单未声明 `mode` 时按既有目标的实际布局（archive/mirror/bare/worktree）处理，避免对裸仓库执行 worktree 检出。
+优化 `gdeploy`：`--commit` 记录的提交在远端不存在时告警并保留分支顶端，不再报 `unable to read tree`。
+优化 `gdeploy` archive 判定对齐 `garchive`，要求 `.git` 内存在 `config.archive`。
 
 ## v0.3.4
 

@@ -203,6 +203,7 @@ def test_scan_workspace_records_archive_mirror_and_bare_modes(tmp_path):
     archive = tmp_path / "archive"
     archive.mkdir()
     git.Repo.clone_from(str(source), str(archive / ".git"), mirror=True)
+    (archive / ".git" / "config.archive").write_text("[core]\n\tbare = false\n", encoding="utf-8")
     git.Repo.clone_from(str(source), str(tmp_path / "mirror.git"), mirror=True)
     git.Repo.clone_from(str(source), str(tmp_path / "bare.git"), bare=True)
 
@@ -584,6 +585,60 @@ def test_deploy_manifest_detaches_when_commit_not_on_branch(tmp_path):
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == orphan_commit
     assert deployed.head.is_detached == True
+
+
+def test_deploy_manifest_falls_back_when_commit_missing(tmp_path, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    repo = make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {
+                "path": "demo",
+                "remote": {"origin": str(source)},
+                "branch": "main",
+                "commit": "0" * 40,
+            }
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace), str(manifest_file), checkout_to_commit=True
+    ) == 0
+
+    deployed = git.Repo(workspace / "demo")
+    assert deployed.head.commit.hexsha == repo.head.commit.hexsha
+    assert "commit not found" in capsys.readouterr().err
+
+
+def test_deploy_manifest_handles_existing_mirror_without_mode(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    target.mkdir()
+    git.Repo.clone_from(str(source), str(target / ".git"), mirror=True)
+
+    manifest = {
+        "variables": [],
+        "repositories": [
+            {"path": "demo", "remote": {"origin": str(source)}, "branch": "main"}
+        ],
+    }
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert git.Repo(target / ".git").bare == True
 
 
 def test_deploy_manifest_clones_archive_without_checkout_or_post(tmp_path):

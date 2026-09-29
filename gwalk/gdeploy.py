@@ -71,7 +71,7 @@ def is_archive_directory(path, remote_name=None):
     if sorted(os.listdir(path)) != [".git"]:
         return False
     git_dir = archive_git_dir(path)
-    if not os.path.isdir(git_dir):
+    if not os.path.isfile(os.path.join(git_dir, "config.archive")):
         return False
     try:
         repo = git.Repo(git_dir)
@@ -87,6 +87,27 @@ def repository_mode(repo, directory, repo_type, preferred_remotes=None):
         return "archive"
     if repo.bare:
         matched_remote = selected_remote_name(repo, preferred_remotes)
+        return "mirror" if is_mirror_repository(repo, matched_remote) else "bare"
+    return "worktree"
+
+
+def existing_directory_mode(directory, preferred_remotes=None):
+    """Detect the actual mode of an existing target directory.
+
+    Returns one of ``archive``, ``mirror``, ``bare`` or ``worktree``, or
+    ``None`` when the directory does not exist or is not a Git repository.
+    """
+    if not os.path.isdir(directory):
+        return None
+    try:
+        repo = git.Repo(directory)
+    except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
+        return None
+
+    matched_remote = selected_remote_name(repo, preferred_remotes)
+    if is_archive_directory(directory, matched_remote):
+        return "archive"
+    if repo.bare:
         return "mirror" if is_mirror_repository(repo, matched_remote) else "bare"
     return "worktree"
 
@@ -400,13 +421,33 @@ def branch_contains_commit(repo, branch, commit):
         return False
 
 
+def commit_available(repo, commit):
+    try:
+        repo.git.cat_file("-e", f"{commit}^{{commit}}")
+        return True
+    except git.exc.GitCommandError:
+        return False
+
+
 def checkout_commit(repo, commit, branch=None):
     """Checkout the recorded commit, staying on the recorded branch if possible.
 
     When the recorded commit is reachable from the recorded branch, reset that
     branch to the commit instead of using a detached HEAD checkout.
+
+    When the recorded commit is no longer available (for example the manifest
+    snapshot refers to a commit that was dropped by a rewritten branch), keep
+    the branch head and warn instead of failing.
     """
     if not commit:
+        return
+
+    if not commit_available(repo, commit):
+        cprint(
+            f"Warning: commit not found, keeping branch head: {commit}",
+            "yellow",
+            file=sys.stderr,
+        )
         return
 
     if branch and branch in [head.name for head in repo.heads]:
@@ -635,7 +676,7 @@ def deploy_manifest(
         commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
         remote_name, remotes = select_remote_entry(remote_value, preferred_remotes)
-        mode = repository.get("mode") or "worktree"
+        mode = repository.get("mode") or existing_directory_mode(target, preferred_remotes) or "worktree"
         should_run_post = mode == "worktree"
 
         try:
