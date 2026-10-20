@@ -24,6 +24,7 @@ gdeploy --scan --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
 gdeploy --commit [-d WORKSPACE] [MANIFEST]
+gdeploy --sync-remotes [-d WORKSPACE] [MANIFEST]
 gdeploy --checkout [-d WORKSPACE] [MANIFEST]
 ```
 
@@ -70,7 +71,7 @@ Repository fields:
 
 Disable a repository by commenting it out or removing it.
 
-Variable replacement applies to `remote`, `branch`, and `post`.
+Variable replacement applies to `remote`, `branch`, `commit`, and `post`.
 
 Supported variables:
 
@@ -205,6 +206,8 @@ Rules:
 
 If the chosen remote value is a list, URLs are tried in order until clone succeeds.
 
+For an existing repository, deploy compares the selected named remote's first fetch URL with the manifest's allowed URLs. A match needs no action. If the remote is missing or differs, deploy shows both addresses and asks whether to create or update that remote. Declining fails that repository without changing its remote. Without an interactive terminal, a mismatch fails immediately. `--sync-remotes` explicitly approves these changes for unattended deployment. Other named remotes are left alone. Newly cloned repositories use the selected remote name instead of always creating `origin`.
+
 Example:
 
 ```python
@@ -242,14 +245,16 @@ For each repository entry:
    - Create the parent directory.
    - Clone from selected remote URLs in order.
    - If a clone attempt fails and leaves a partial target directory, remove it before trying the next URL.
+   - Finish the requested branch or commit checkout, then update submodules and run `post`.
 5. If target exists and is an empty directory:
    - Clone into that empty directory.
    - This supports users who create the deployment directory before running `gdeploy`.
 6. If target exists and is not empty:
    - It must be a Git repository root.
    - Non-Git directories are not overwritten and count as failures.
-   - Run fetch, checkout branch, and fast-forward pull.
+   - Verify the selected remote URL, fetch that remote, then apply either the branch or commit flow below.
 7. If `post` exists:
+   - Run it only after the final checkout and submodule update succeed.
    - Run each command with the repository root as working directory.
    - Commands are executed with `shell=True`.
    - Any non-zero command marks `post_failed`, but deployment continues to following repositories.
@@ -257,57 +262,55 @@ For each repository entry:
 Repository modes:
 
 - Missing `mode` deploys a normal worktree repository using the rules above.
-- `mode: 'archive'` creates or updates `<target>/.git` with `garchive clone` archive storage, including `config.archive` and `mate.archive`. By default it does not checkout files and does not run `post`.
-- `mode: 'mirror'` creates or updates `<target>` as a bare mirror repository. It does not checkout files and does not run `post`.
-- `mode: 'bare'` creates or updates `<target>` as a bare non-mirror repository. It does not checkout files and does not run `post`.
+- `mode: 'archive'` creates or updates `<target>/.git` with `garchive clone` archive storage, including `config.archive` and `mate.archive`. By default it only fetches the selected remote and does not checkout files or run `post`.
+- `mode: 'mirror'` creates or updates `<target>` as a bare mirror repository. It fetches the selected remote and does not checkout files or run `post`.
+- `mode: 'bare'` creates or updates `<target>` as a bare non-mirror repository. It fetches the selected remote and does not checkout files or run `post`.
 
 Archive checkout:
 
 - `--checkout` applies only to `mode: 'archive'`.
-- When an archive repository is still in `<target>/.git` layout, `gdeploy` calls `garchive` to restore it in place, then checks out the requested branch or commit.
+- When an archive repository is still in `<target>/.git` layout, `gdeploy` calls `garchive` to restore it in place, then checks out the requested branch or commit. Snapshot checkout verifies the commit exists before converting the archive.
 - If `--checkout` is used with `mode: 'mirror'` or `mode: 'bare'`, gdeploy prints a warning and keeps the repository unchanged.
 - `post` commands for archive repositories run only after `--checkout` has produced a normal worktree.
 
 Commit checkout:
 
 - By default, deploy does not use the manifest `commit` field.
-- With `--commit`, deploy checks out the repository to the manifest `commit` after clone/update.
-- When the manifest `branch` exists and already contains the `commit`, deploy attaches to that branch and resets it to the commit, so the worktree is pinned without a detached HEAD.
-- Otherwise (no branch, branch missing, or the commit is not reachable from the branch), deploy falls back to a detached checkout, which may leave the repository in detached HEAD state.
-- If the recorded `commit` no longer exists on the remote (for example the manifest snapshot refers to a commit dropped by a rewritten branch), deploy prints a warning and keeps the branch head instead of failing.
-- If `commit` is missing, no commit checkout is performed for that repository.
+- With `--commit`, deploy fetches the selected remote and verifies that the manifest `commit` is available in the local object database. A missing field or unavailable commit fails that repository.
+- It then runs `git switch --detach <commit>` without pulling or moving a named local branch. Detached HEAD is the expected snapshot state.
+- Existing worktree changes, including dirty submodules, fail the checkout instead of being discarded.
+- Archive repositories apply the commit only when `--checkout` is also specified; bare and mirror repositories remain bare.
 
 By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:
 
 ```text
-Workspace: I:\Projects
+Workspace: H:\Projects
 Path:      FoneToolBackup
-Target:    I:\Projects\FoneToolBackup
+Target:    H:\Projects\FoneToolBackup
 ```
 
 With `-H` or `--here`, the first path component is mapped to the workspace itself:
 
 ```text
-Workspace: I:\Projects\FoneToolBackup
+Workspace: H:\Projects\FoneToolBackup
 Path:      FoneToolBackup
-Target:    I:\Projects\FoneToolBackup
+Target:    H:\Projects\FoneToolBackup
 
 Path:      FoneToolBackup/com/uiframe
-Target:    I:\Projects\FoneToolBackup\com\uiframe
+Target:    H:\Projects\FoneToolBackup\com\uiframe
 ```
 
 Branch handling:
 
-- If no `branch` is specified, branch checkout and pull are skipped.
-- If the local branch exists, checkout it.
-- Otherwise, if a remote tracking branch exists, create a local tracking branch.
-- Otherwise, create a new local branch.
-- Pull uses `git pull --ff-only`.
-- Pull failure is warned but does not immediately abort that repository.
+- Normal deployment fetches the selected remote before switching branches. A clone already includes this fetch.
+- If no `branch` is specified, branch checkout and merge are skipped.
+- If the local branch exists, switch to it. Otherwise, create it from `<remote>/<branch>` with tracking.
+- The selected remote branch must exist. Deploy runs `git merge --ff-only <remote>/<branch>` after switching, so a local upstream is not required.
+- A divergent branch or dirty worktree fails that repository. Deploy never automatically runs `reset --hard`.
 
 Submodule handling:
 
-- After clone or update, if the repository has submodules, deploy runs:
+- After the parent repository reaches its final branch or commit, if it has submodules, deploy runs:
 
   ```bash
   git submodule update --init --recursive

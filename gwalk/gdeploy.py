@@ -91,7 +91,7 @@ def repository_mode(repo, directory, repo_type, preferred_remotes=None):
     return "worktree"
 
 
-def existing_directory_mode(directory, preferred_remotes=None):
+def existing_directory_mode(directory):
     """Detect the actual mode of an existing target directory.
 
     Returns one of ``archive``, ``mirror``, ``bare`` or ``worktree``, or
@@ -104,11 +104,10 @@ def existing_directory_mode(directory, preferred_remotes=None):
     except (git.exc.InvalidGitRepositoryError, git.exc.NoSuchPathError):
         return None
 
-    matched_remote = selected_remote_name(repo, preferred_remotes)
-    if is_archive_directory(directory, matched_remote):
+    if is_archive_directory(directory):
         return "archive"
     if repo.bare:
-        return "mirror" if is_mirror_repository(repo, matched_remote) else "bare"
+        return "mirror" if is_mirror_repository(repo) else "bare"
     return "worktree"
 
 
@@ -391,34 +390,29 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     return 0
 
 
-def checkout_branch(repo, branch):
+def checkout_branch(repo, branch, remote_name):
     if not branch:
         return
 
-    repo.git.fetch("--all", "--prune")
+    if repo.is_dirty(untracked_files=True, submodules=True):
+        raise RuntimeError(f"Working tree is dirty: {repo.working_dir}")
+
+    remote_branch = f"{remote_name}/{branch}" if remote_name else None
+    if remote_branch:
+        try:
+            repo.git.show_ref("--verify", f"refs/remotes/{remote_branch}")
+        except git.exc.GitCommandError:
+            raise RuntimeError(f"Remote branch not found: {remote_branch}")
+
     if branch in [head.name for head in repo.heads]:
-        repo.git.checkout(branch)
+        repo.git.switch(branch)
+    elif remote_branch:
+        repo.git.switch("--track", "-c", branch, remote_branch)
     else:
-        for remote in repo.remotes:
-            refname = f"{remote.name}/{branch}"
-            if refname in [ref.name for ref in remote.refs]:
-                repo.git.checkout("-b", branch, "--track", refname)
-                break
-        else:
-            repo.git.checkout("-b", branch)
+        raise RuntimeError(f"Branch not found: {branch}")
 
-    try:
-        repo.git.pull("--ff-only")
-    except git.exc.GitCommandError as e:
-        cprint(f"Warning: pull failed in {repo.working_dir}: {e}", "yellow", file=sys.stderr)
-
-
-def branch_contains_commit(repo, branch, commit):
-    try:
-        repo.git.merge_base("--is-ancestor", commit, branch)
-        return True
-    except git.exc.GitCommandError:
-        return False
+    if remote_branch:
+        repo.git.merge("--ff-only", remote_branch)
 
 
 def commit_available(repo, commit):
@@ -429,34 +423,15 @@ def commit_available(repo, commit):
         return False
 
 
-def checkout_commit(repo, commit, branch=None):
-    """Checkout the recorded commit, staying on the recorded branch if possible.
-
-    When the recorded commit is reachable from the recorded branch, reset that
-    branch to the commit instead of using a detached HEAD checkout.
-
-    When the recorded commit is no longer available (for example the manifest
-    snapshot refers to a commit that was dropped by a rewritten branch), keep
-    the branch head and warn instead of failing.
-    """
+def checkout_commit(repo, commit):
     if not commit:
-        return
+        raise RuntimeError(f"Manifest commit is missing: {repo.working_dir}")
 
     if not commit_available(repo, commit):
-        cprint(
-            f"Warning: commit not found, keeping branch head: {commit}",
-            "yellow",
-            file=sys.stderr,
-        )
-        return
-
-    if branch and branch in [head.name for head in repo.heads]:
-        if branch_contains_commit(repo, branch, commit):
-            repo.git.checkout(branch)
-            repo.git.reset("--hard", commit)
-            return
-
-    repo.git.checkout(commit)
+        raise RuntimeError(f"Manifest commit not found: {commit}")
+    if repo.is_dirty(untracked_files=True, submodules=True):
+        raise RuntimeError(f"Working tree is dirty: {repo.working_dir}")
+    repo.git.switch("--detach", commit)
 
 
 def update_submodules(repo):
@@ -503,18 +478,18 @@ def run_git_command(args, cwd=None):
         raise RuntimeError(f"git {' '.join(args)} failed: {process.returncode}")
 
 
-def clone_repository(remotes, target, branch):
+def clone_repository(remotes, target, remote_name):
     target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     last_error = None
     for remote in remotes:
         try:
             cprint(f"Clone {target} from {remote}", "green")
-            run_git_command(["clone", remote, target])
-            repo = git.Repo(target)
-            checkout_branch(repo, branch)
-            update_submodules(repo)
-            return repo
+            args = ["clone"]
+            if remote_name:
+                args.extend(["--origin", remote_name])
+            run_git_command(args + [remote, target])
+            return git.Repo(target)
         except Exception as e:
             last_error = e
             cprint(f"Clone failed from {remote}: {e}", "red", file=sys.stderr)
@@ -573,6 +548,49 @@ def select_remote_entry(remote_value, preferred_remotes=None):
     return name, remotes
 
 
+def ensure_manifest_remote(repo, name, urls, sync_remotes=False):
+    if not urls:
+        return selected_remote_name(repo)
+
+    if not name:
+        raise RuntimeError(f"Manifest remote has no name: {repo.git_dir}")
+
+    existing = next((remote for remote in repo.remotes if remote.name == name), None)
+    current_urls = repo.git.config("--get-all", f"remote.{name}.url").splitlines() if existing else []
+    if current_urls and any(
+        current_urls[0].replace("\\", "/") == url.replace("\\", "/")
+        for url in urls
+    ):
+        return name
+
+    cprint(f"Remote {name} differs in {repo.git_dir}", "yellow")
+    cprint(f"  Current:  {current_urls[0] if current_urls else '<missing>'}", "yellow")
+    cprint(f"  Manifest: {urls[0]}", "yellow")
+    if not sync_remotes:
+        if not sys.stdin.isatty():
+            raise RuntimeError("Remote differs; use --sync-remotes to approve synchronization")
+        try:
+            answer = input("Synchronize this remote? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer != "y":
+            raise RuntimeError(f"Remote synchronization declined: {name}")
+
+    if existing:
+        repo.git.remote("set-url", name, urls[0])
+    elif is_mirror_repository(repo):
+        repo.git.remote("add", "--mirror=fetch", name, urls[0])
+        repo.git.config(f"remote.{name}.mirror", "true")
+    else:
+        repo.create_remote(name, urls[0])
+    return name
+
+
+def fetch_repository(repo, remote_name):
+    if remote_name:
+        repo.git.fetch(remote_name, "--prune")
+
+
 def run_post_commands(commands, directory):
     if not commands:
         return True
@@ -589,7 +607,7 @@ def run_post_commands(commands, directory):
     return ok
 
 
-def clone_mode_repository(mode, remotes, target):
+def clone_mode_repository(mode, remotes, target, remote_name):
     target_existed = os.path.exists(target)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     if mode == "archive":
@@ -608,8 +626,13 @@ def clone_mode_repository(mode, remotes, target):
             cprint(f"Clone {target} from {remote} ({mode})", "green")
             if mode == "archive":
                 garchive.clone(remote, target)
-                return git.Repo(archive_git_dir(target))
+                repo = git.Repo(archive_git_dir(target))
+                if remote_name and remote_name != "origin":
+                    repo.git.remote("rename", "origin", remote_name)
+                return repo
             args = ["clone"]
+            if remote_name:
+                args.extend(["--origin", remote_name])
             if mode == "mirror":
                 args.append("--mirror")
             elif mode == "bare":
@@ -627,9 +650,9 @@ def clone_mode_repository(mode, remotes, target):
     raise last_error
 
 
-def update_bare_like_repository(repo, target):
+def update_bare_like_repository(repo, target, remote_name):
     cprint(f"Update {target}", "green")
-    repo.git.remote("update", "--prune")
+    fetch_repository(repo, remote_name)
 
 
 def ensure_checkout_target(repository, branch, commit, checkout_to_commit):
@@ -647,6 +670,7 @@ def deploy_manifest(
     here=False,
     checkout_to_commit=False,
     checkout_archive=False,
+    sync_remotes=False,
 ):
     manifest = load_manifest(manifest_file)
     summary = {
@@ -676,7 +700,7 @@ def deploy_manifest(
         commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
         post = replace_variables(repository.get("post"), manifest, repository, workspace)
         remote_name, remotes = select_remote_entry(remote_value, preferred_remotes)
-        mode = repository.get("mode") or existing_directory_mode(target, preferred_remotes) or "worktree"
+        mode = repository.get("mode") or existing_directory_mode(target) or "worktree"
         should_run_post = mode == "worktree"
 
         try:
@@ -684,79 +708,89 @@ def deploy_manifest(
                 if checkout_archive and mode != "archive":
                     cprint(f"Skip checkout for {mode} repository: {path}", "yellow")
 
-                if os.path.exists(target) and not is_empty_directory(target):
-                    if mode == "archive" and is_archive_directory(target, remote_name):
+                existed = os.path.exists(target) and not is_empty_directory(target)
+                if existed:
+                    if mode == "archive" and is_archive_directory(target):
                         repo = git.Repo(archive_git_dir(target))
-                        update_bare_like_repository(repo, target)
-                        summary["updated"] += 1
                     elif mode in ["mirror", "bare"] and is_bare_repository_path(target):
                         repo = git.Repo(target)
-                        if mode == "mirror" and not is_mirror_repository(repo, remote_name):
+                        if mode == "mirror" and not is_mirror_repository(repo):
                             raise RuntimeError(f"Expected a mirror repository: {target}")
-                        if mode == "bare" and is_mirror_repository(repo, remote_name):
+                        if mode == "bare" and is_mirror_repository(repo):
                             raise RuntimeError(f"Expected a bare non-mirror repository: {target}")
-                        update_bare_like_repository(repo, target)
-                        summary["updated"] += 1
                     elif mode == "archive" and gwalk.RepoWalk.isRepoRoot(target):
-                        cprint(f"Update {target}", "green")
                         repo = git.Repo(target)
-                        checkout_branch(repo, branch)
-                        update_submodules(repo)
-                        summary["updated"] += 1
-                        should_run_post = checkout_archive
                     else:
-                        cprint(f"Skip non-{mode} directory: {target}", "red", file=sys.stderr)
-                        summary["failed"] += 1
-                        continue
+                        raise RuntimeError(f"Expected a {mode} repository: {target}")
+
+                    remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes)
+                    if repo.bare:
+                        update_bare_like_repository(repo, target, remote_name)
+                    else:
+                        cprint(f"Update {target}", "green")
+                        fetch_repository(repo, remote_name)
                 else:
                     if not remotes:
-                        cprint(f"No remote for missing repository: {path}", "red", file=sys.stderr)
-                        summary["failed"] += 1
-                        continue
-                    repo = clone_mode_repository(mode, remotes, target)
-                    summary["cloned"] += 1
+                        raise RuntimeError(f"No remote for missing repository: {path}")
+                    repo = clone_mode_repository(mode, remotes, target, remote_name)
 
                 if mode == "archive" and checkout_archive:
                     ensure_checkout_target(repository, branch, commit, checkout_to_commit)
-                    if is_archive_directory(target, remote_name):
-                        garchive.restore(archive_git_dir(target), None, branch, here=True)
-                    repo = git.Repo(target)
+                    if repo.bare:
+                        if checkout_to_commit and not commit_available(repo, commit):
+                            raise RuntimeError(f"Manifest commit not found: {commit}")
+                        garchive.restore(
+                            archive_git_dir(target), None,
+                            commit if checkout_to_commit else branch, here=True,
+                        )
+                        repo = git.Repo(target)
                     if checkout_to_commit:
-                        checkout_commit(repo, commit, branch)
+                        checkout_commit(repo, commit)
+                    else:
+                        fetch_repository(repo, remote_name)
+                        checkout_branch(repo, branch, remote_name)
                     update_submodules(repo)
                     should_run_post = True
+                elif mode == "archive" and not repo.bare:
+                    if checkout_to_commit:
+                        checkout_commit(repo, commit)
+                    else:
+                        checkout_branch(repo, branch, remote_name)
+                    update_submodules(repo)
+                    should_run_post = checkout_archive
 
                 if should_run_post and not run_post_commands(post, target):
                     summary["post_failed"] += 1
+                summary["updated" if existed else "cloned"] += 1
                 continue
 
             if mode != "worktree":
                 raise RuntimeError(f"Unsupported repository mode: {mode}")
 
-            if os.path.exists(target) and not is_empty_directory(target):
+            existed = os.path.exists(target) and not is_empty_directory(target)
+            if existed:
                 if not gwalk.RepoWalk.isRepoRoot(target):
-                    cprint(f"Skip non-git directory: {target}", "red", file=sys.stderr)
-                    summary["failed"] += 1
-                    continue
+                    raise RuntimeError(f"Expected a Git repository: {target}")
 
                 cprint(f"Update {target}", "green")
                 repo = git.Repo(target)
-                checkout_branch(repo, branch)
-                update_submodules(repo)
-                summary["updated"] += 1
+                remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes)
+                fetch_repository(repo, remote_name)
             else:
                 if not remotes:
-                    cprint(f"No remote for missing repository: {path}", "red", file=sys.stderr)
-                    summary["failed"] += 1
-                    continue
-                repo = clone_repository(remotes, target, branch)
-                summary["cloned"] += 1
+                    raise RuntimeError(f"No remote for missing repository: {path}")
+                repo = clone_repository(remotes, target, remote_name)
 
             if checkout_to_commit:
-                checkout_commit(repo, commit, branch)
+                checkout_commit(repo, commit)
+            else:
+                checkout_branch(repo, branch, remote_name)
+
+            update_submodules(repo)
 
             if should_run_post and not run_post_commands(post, target):
                 summary["post_failed"] += 1
+            summary["updated" if existed else "cloned"] += 1
 
         except Exception as e:
             cprint(f"Failed {path}: {e}", "red", file=sys.stderr)
@@ -806,7 +840,12 @@ def main():
     parser.add_argument(
         "--commit",
         action="store_true",
-        help="checkout repositories to manifest commits (detached only when the branch lacks the commit)",
+        help="checkout repositories to manifest commits with detached HEAD",
+    )
+    parser.add_argument(
+        "--sync-remotes",
+        action="store_true",
+        help="approve updating mismatched existing remotes without prompting",
     )
     parser.add_argument(
         "--checkout",
@@ -830,7 +869,10 @@ def main():
         if not os.path.exists(manifest):
             cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
             return 1
-        return deploy_manifest(workspace, manifest, args.remote, args.here, args.commit, args.checkout)
+        return deploy_manifest(
+            workspace, manifest, args.remote, args.here, args.commit,
+            args.checkout, args.sync_remotes,
+        )
     except KeyboardInterrupt:
         cprint("\nInterrupted", "red", file=sys.stderr)
         return 130

@@ -508,7 +508,7 @@ def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
     assert deployed.head.commit.hexsha == first_commit
 
 
-def test_deploy_manifest_keeps_branch_when_commit_is_ancestor(tmp_path):
+def test_deploy_manifest_detaches_without_moving_branch(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     repo = make_repo(source, "main")
@@ -541,8 +541,8 @@ def test_deploy_manifest_keeps_branch_when_commit_is_ancestor(tmp_path):
 
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == first_commit
-    assert deployed.head.is_detached == False
-    assert deployed.active_branch.name == "main"
+    assert deployed.head.is_detached == True
+    assert deployed.heads.main.commit.hexsha == repo.head.commit.hexsha
 
 
 def test_deploy_manifest_detaches_when_commit_not_on_branch(tmp_path):
@@ -587,7 +587,7 @@ def test_deploy_manifest_detaches_when_commit_not_on_branch(tmp_path):
     assert deployed.head.is_detached == True
 
 
-def test_deploy_manifest_falls_back_when_commit_missing(tmp_path, capsys):
+def test_deploy_manifest_fails_when_commit_missing(tmp_path, capsys):
     source = tmp_path / "source"
     source.mkdir()
     repo = make_repo(source, "main")
@@ -610,11 +610,214 @@ def test_deploy_manifest_falls_back_when_commit_missing(tmp_path, capsys):
 
     assert gdeploy.deploy_manifest(
         str(workspace), str(manifest_file), checkout_to_commit=True
-    ) == 0
+    ) == 1
 
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == repo.head.commit.hexsha
-    assert "commit not found" in capsys.readouterr().err
+    assert "Manifest commit not found" in capsys.readouterr().err
+
+
+def test_deploy_existing_remote_requires_approval_and_can_sync(tmp_path, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+    replacement = tmp_path / "replacement"
+    replacement_repo = git.Repo.clone_from(str(source), str(replacement))
+    with replacement_repo.config_writer() as config:
+        config.set_value("user", "name", "test")
+        config.set_value("user", "email", "test@example.com")
+    (replacement / "README.md").write_text("replacement\n", encoding="utf-8")
+    replacement_repo.index.add(["README.md"])
+    replacement_repo.index.commit("replacement")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    original_commit = deployed.head.commit.hexsha
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"origin": str(replacement)}, "branch": "main",
+        }],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
+    assert deployed.head.commit.hexsha == original_commit
+    assert "Remote differs" in capsys.readouterr().err
+
+    assert gdeploy.deploy_manifest(
+        str(workspace), str(manifest_file), sync_remotes=True,
+    ) == 0
+    assert deployed.head.commit.hexsha == replacement_repo.head.commit.hexsha
+    assert deployed.git.config("--get", "remote.origin.url").replace("\\", "/") == str(replacement).replace("\\", "/")
+
+
+def test_remote_sync_accepts_interactive_confirmation(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    target = tmp_path / "target"
+    repo = git.Repo.clone_from(str(source), str(target))
+    expected = str(tmp_path / "replacement")
+    assert gdeploy.ensure_manifest_remote(repo, "origin", [expected, str(source)]) == "origin"
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+
+    assert gdeploy.ensure_manifest_remote(repo, "origin", [expected]) == "origin"
+    assert repo.git.config("--get", "remote.origin.url").replace("\\", "/") == expected.replace("\\", "/")
+
+
+@pytest.mark.parametrize("mirror", [False, True])
+def test_remote_sync_creates_missing_named_remote(tmp_path, mirror):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    target = tmp_path / "target"
+    repo = git.Repo.clone_from(str(source), str(target), mirror=mirror)
+
+    assert gdeploy.ensure_manifest_remote(repo, "github", [str(source)], sync_remotes=True) == "github"
+    assert {remote.name for remote in repo.remotes} == {"origin", "github"}
+    if mirror:
+        assert gdeploy.bool_config(repo, 'remote "github"', "mirror") == True
+
+
+def test_deploy_fast_forwards_branch_without_upstream(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    source_repo = make_repo(source, "ft")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    deployed.git.branch("--unset-upstream", "ft")
+
+    (source / "README.md").write_text("next\n", encoding="utf-8")
+    source_repo.index.add(["README.md"])
+    source_repo.index.commit("next")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"origin": str(source)}, "branch": "ft",
+        }],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert deployed.head.commit.hexsha == source_repo.head.commit.hexsha
+    assert deployed.active_branch.name == "ft"
+
+
+def test_deploy_divergent_branch_preserves_local_commits(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    source_repo = make_repo(source, "main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    with deployed.config_writer() as config:
+        config.set_value("user", "name", "test")
+        config.set_value("user", "email", "test@example.com")
+
+    (target / "README.md").write_text("local\n", encoding="utf-8")
+    deployed.index.add(["README.md"])
+    local_commit = deployed.index.commit("local").hexsha
+    (source / "README.md").write_text("remote\n", encoding="utf-8")
+    source_repo.index.add(["README.md"])
+    source_repo.index.commit("remote")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"origin": str(source)}, "branch": "main",
+            "commit": source_repo.head.commit.hexsha,
+        }],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
+    assert deployed.head.commit.hexsha == local_commit
+    assert deployed.head.is_detached == False
+
+
+def test_deploy_snapshot_skips_merge_and_updates_submodules_after_checkout(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    source_repo = make_repo(source, "main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    with deployed.config_writer() as config:
+        config.set_value("user", "name", "test")
+        config.set_value("user", "email", "test@example.com")
+
+    (target / "README.md").write_text("local\n", encoding="utf-8")
+    deployed.index.add(["README.md"])
+    local_commit = deployed.index.commit("local").hexsha
+    (source / "README.md").write_text("remote\n", encoding="utf-8")
+    source_repo.index.add(["README.md"])
+    source_repo.index.commit("remote")
+    wanted = source_repo.head.commit.hexsha
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"origin": str(source)},
+            "branch": "main", "commit": wanted,
+        }],
+    }), encoding="utf-8")
+    submodule_heads = []
+    monkeypatch.setattr(gdeploy, "update_submodules", lambda repo: submodule_heads.append(repo.head.commit.hexsha))
+
+    assert gdeploy.deploy_manifest(
+        str(workspace), str(manifest_file), checkout_to_commit=True,
+    ) == 0
+    assert deployed.head.is_detached == True
+    assert deployed.head.commit.hexsha == wanted
+    assert deployed.heads.main.commit.hexsha == local_commit
+    assert submodule_heads == [wanted]
+
+
+def test_deploy_snapshot_requires_manifest_commit(tmp_path, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{"path": "demo", "remote": {"origin": str(source)}}],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(
+        str(workspace), str(manifest_file), checkout_to_commit=True,
+    ) == 1
+    assert deployed.head.is_detached == False
+    assert "Manifest commit is missing" in capsys.readouterr().err
+
+
+def test_clone_uses_selected_remote_name_on_later_updates(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"github": str(source)}, "branch": "main",
+        }],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert [remote.name for remote in git.Repo(workspace / "demo").remotes] == ["github"]
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
 
 
 def test_deploy_manifest_handles_existing_mirror_without_mode(tmp_path):
@@ -672,7 +875,7 @@ def test_deploy_manifest_clones_archive_without_checkout_or_post(tmp_path):
     assert not (workspace / "backup" / "post.txt").exists()
 
 
-def test_deploy_manifest_checkouts_archive_and_runs_post(tmp_path):
+def test_deploy_manifest_checkouts_archive_and_runs_post(tmp_path, monkeypatch):
     source = tmp_path / "source"
     source.mkdir()
     make_repo(source, "main")
@@ -703,6 +906,14 @@ def test_deploy_manifest_checkouts_archive_and_runs_post(tmp_path):
     assert git.Repo(workspace / "backup").bare == False
     assert (workspace / "backup" / "README.md").read_text(encoding="utf-8") == "test\n"
     assert (workspace / "backup" / "post.txt").read_text() == "ok"
+
+    (workspace / "backup" / "post.txt").unlink()
+    calls = []
+    monkeypatch.setattr(gdeploy, "run_post_commands", lambda commands, directory: calls.append(directory) or True)
+    assert gdeploy.deploy_manifest(
+        str(workspace), str(manifest_file), checkout_archive=True,
+    ) == 0
+    assert calls == [str(workspace / "backup")]
 
 
 def test_deploy_manifest_checkouts_archive_to_commit(tmp_path):
@@ -773,6 +984,27 @@ def test_deploy_manifest_clones_mirror_and_bare_modes(tmp_path):
     assert bare.bare == True
     assert gdeploy.bool_config(mirror, 'remote "origin"', "mirror") == True
     assert gdeploy.bool_config(bare, 'remote "origin"', "mirror") == False
+
+
+@pytest.mark.parametrize("mode", ["archive", "mirror", "bare"])
+def test_non_worktree_modes_keep_selected_remote_name(tmp_path, mode):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "mode": mode, "remote": {"github": str(source)},
+        }],
+    }), encoding="utf-8")
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    repo_path = workspace / "demo" / ".git" if mode == "archive" else workspace / "demo"
+    assert [remote.name for remote in git.Repo(repo_path).remotes] == ["github"]
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
 
 
 def test_deploy_manifest_skips_checkout_for_mirror_and_bare(tmp_path, capsys):
