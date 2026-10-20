@@ -548,29 +548,46 @@ def select_remote_entry(remote_value, preferred_remotes=None):
     return name, remotes
 
 
-def ensure_manifest_remote(repo, name, urls, sync_remotes=False):
+def ensure_manifest_remote(repo, name, urls, sync_remotes=False, display_path=None):
     if not urls:
         return selected_remote_name(repo)
 
     if not name:
         raise RuntimeError(f"Manifest remote has no name: {repo.git_dir}")
 
+    allowed_urls = {url.replace("\\", "/") for url in urls}
     existing = next((remote for remote in repo.remotes if remote.name == name), None)
     current_urls = repo.git.config("--get-all", f"remote.{name}.url").splitlines() if existing else []
-    if current_urls and any(
-        current_urls[0].replace("\\", "/") == url.replace("\\", "/")
-        for url in urls
-    ):
+    if current_urls and current_urls[0].replace("\\", "/") in allowed_urls:
         return name
 
-    cprint(f"Remote {name} differs in {repo.git_dir}", "yellow")
-    cprint(f"  Current:  {current_urls[0] if current_urls else '<missing>'}", "yellow")
-    cprint(f"  Manifest: {urls[0]}", "yellow")
+    display_path = display_path or repo.working_tree_dir or repo.git_dir
+    if existing:
+        cprint(f"Remote '{name}' URL differs in {display_path}", "yellow")
+    else:
+        cprint(f"Manifest remote '{name}' is missing in {display_path}", "yellow")
+    cprint(f"  Manifest: {name} -> {urls[0]}", "yellow")
+    if existing:
+        cprint(f"  Existing: {name} -> {current_urls[0] if current_urls else '<missing>'}", "yellow")
+    else:
+        remotes = list(repo.remotes)
+        if len(remotes) != 1:
+            cprint("  Existing:", "yellow")
+        for remote in remotes:
+            remote_urls = repo.git.config("--get-all", f"remote.{remote.name}.url").splitlines()
+            remote_url = remote_urls[0] if remote_urls else "<missing>"
+            same_url = remote_urls and remote_url.replace("\\", "/") in allowed_urls
+            prefix = "  Existing: " if len(remotes) == 1 else "    "
+            cprint(f"{prefix}{remote.name} -> {remote_url}{' (same fetch URL)' if same_url else ''}", "yellow")
+        if not remotes:
+            cprint("    <none>", "yellow")
     if not sync_remotes:
         if not sys.stdin.isatty():
-            raise RuntimeError("Remote differs; use --sync-remotes to approve synchronization")
+            reason = "Remote differs" if existing else f"Remote {name} is missing"
+            raise RuntimeError(f"{reason}; use --sync-remotes to approve synchronization")
         try:
-            answer = input("Synchronize this remote? [y/N] ").strip().lower()
+            action = "Update" if existing else "Add"
+            answer = input(f"{action} remote '{name}'? [y/N] ").strip().lower()
         except EOFError:
             answer = ""
         if answer != "y":
@@ -695,6 +712,7 @@ def deploy_manifest(
             continue
 
         target = repository_target(workspace, path, here)
+        display_path = os.path.relpath(target, workspace).replace("\\", "/")
         remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
         commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
@@ -723,7 +741,7 @@ def deploy_manifest(
                     else:
                         raise RuntimeError(f"Expected a {mode} repository: {target}")
 
-                    remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes)
+                    remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
                     if repo.bare:
                         update_bare_like_repository(repo, target, remote_name)
                     else:
@@ -774,7 +792,7 @@ def deploy_manifest(
 
                 cprint(f"Update {target}", "green")
                 repo = git.Repo(target)
-                remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes)
+                remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
                 fetch_repository(repo, remote_name)
             else:
                 if not remotes:

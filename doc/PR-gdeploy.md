@@ -206,7 +206,16 @@ Rules:
 
 If the chosen remote value is a list, URLs are tried in order until clone succeeds.
 
-For an existing repository, deploy compares the selected named remote's first fetch URL with the manifest's allowed URLs. A match needs no action. If the remote is missing or differs, deploy shows both addresses and asks whether to create or update that remote. Declining fails that repository without changing its remote. Without an interactive terminal, a mismatch fails immediately. `--sync-remotes` explicitly approves these changes for unattended deployment. Other named remotes are left alone. Newly cloned repositories use the selected remote name instead of always creating `origin`.
+For an existing repository, the selected remote name is part of the manifest contract. Deploy compares that named remote's first fetch URL with the manifest's allowed URLs. A match needs no action. If the name is missing, deploy shows the repository path relative to the workspace, then the manifest name and URL, followed by existing remote names and URLs. An existing remote with an allowed URL is marked `(same fetch URL)`. One existing remote is shown on a single `Existing:` line; multiple remotes are listed below `Existing:`. Even when `origin` has the same URL as manifest `github`, it does not silently substitute `origin`: confirmation creates `github` and leaves `origin` unchanged. If the name exists with a different URL, deploy shows the same relative path, then the manifest and existing name/URL pairs before asking whether to update it. Declining fails that repository without changing its remotes. Without an interactive terminal, a missing or mismatched remote fails. `--sync-remotes` explicitly approves creation or update for unattended deployment. Other named remotes are left alone. Newly cloned repositories use the selected remote name instead of always creating `origin`.
+
+For example, if manifest `github` is missing while local `origin` has the same URL:
+
+```text
+Manifest remote 'github' is missing in com/pyembed
+  Manifest: github -> https://github.com/ZeroKwok/pyembed.git
+  Existing: origin -> https://github.com/ZeroKwok/pyembed.git (same fetch URL)
+Add remote 'github'? [y/N]
+```
 
 Example:
 

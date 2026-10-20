@@ -645,7 +645,11 @@ def test_deploy_existing_remote_requires_approval_and_can_sync(tmp_path, capsys)
 
     assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
     assert deployed.head.commit.hexsha == original_commit
-    assert "Remote differs" in capsys.readouterr().err
+    output = capsys.readouterr()
+    assert "Remote 'origin' URL differs in demo" in output.out
+    assert f"  Manifest: origin -> {replacement}" in output.out
+    assert "  Existing: origin -> " in output.out
+    assert "Remote differs" in output.err
 
     assert gdeploy.deploy_manifest(
         str(workspace), str(manifest_file), sync_remotes=True,
@@ -663,9 +667,11 @@ def test_remote_sync_accepts_interactive_confirmation(tmp_path, monkeypatch):
     expected = str(tmp_path / "replacement")
     assert gdeploy.ensure_manifest_remote(repo, "origin", [expected, str(source)]) == "origin"
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
 
     assert gdeploy.ensure_manifest_remote(repo, "origin", [expected]) == "origin"
+    assert prompts == ["Update remote 'origin'? [y/N] "]
     assert repo.git.config("--get", "remote.origin.url").replace("\\", "/") == expected.replace("\\", "/")
 
 
@@ -676,11 +682,95 @@ def test_remote_sync_creates_missing_named_remote(tmp_path, mirror):
     make_repo(source)
     target = tmp_path / "target"
     repo = git.Repo.clone_from(str(source), str(target), mirror=mirror)
-
     assert gdeploy.ensure_manifest_remote(repo, "github", [str(source)], sync_remotes=True) == "github"
     assert {remote.name for remote in repo.remotes} == {"origin", "github"}
+    assert repo.git.config("--get", "remote.origin.url").replace("\\", "/") == repo.git.config("--get", "remote.github.url").replace("\\", "/")
     if mirror:
         assert gdeploy.bool_config(repo, 'remote "github"', "mirror") == True
+
+
+def test_deploy_requires_selected_remote_name_even_when_url_matches(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    source_repo = make_repo(source, "dev")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "demo"
+    deployed = git.Repo.clone_from(str(source), str(target))
+    (source / "README.md").write_text("next\n", encoding="utf-8")
+    source_repo.index.add(["README.md"])
+    source_repo.index.commit("next")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"github": str(source)}, "branch": "dev",
+        }],
+    }), encoding="utf-8")
+
+    original_commit = deployed.head.commit.hexsha
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
+    output = capsys.readouterr()
+    source_url = str(source).replace("\\", "/")
+    assert "Manifest remote 'github' is missing in demo" in output.out
+    assert f"  Manifest: github -> {source}" in output.out
+    assert f"  Existing: origin -> {source_url} (same fetch URL)" in output.out
+    assert "Remote github is missing" in output.err
+    assert deployed.head.commit.hexsha == original_commit
+    assert [remote.name for remote in deployed.remotes] == ["origin"]
+
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file), sync_remotes=True) == 0
+    assert deployed.head.commit.hexsha == source_repo.head.commit.hexsha
+    assert {remote.name for remote in deployed.remotes} == {"origin", "github"}
+    assert deployed.git.config("--get", "remote.origin.url").replace("\\", "/") == deployed.git.config("--get", "remote.github.url").replace("\\", "/")
+
+
+def test_missing_named_remote_accepts_interactive_confirmation(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    repo = git.Repo.clone_from(str(source), str(tmp_path / "target"))
+    prompts = []
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+
+    assert gdeploy.ensure_manifest_remote(repo, "github", [str(source)]) == "github"
+    assert prompts == ["Add remote 'github'? [y/N] "]
+    assert {remote.name for remote in repo.remotes} == {"origin", "github"}
+
+
+def test_missing_named_remote_lists_all_existing_remotes(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    repo = git.Repo.clone_from(str(source), str(tmp_path / "target"))
+    repo.create_remote("backup", "https://example.invalid/backup.git")
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False))
+
+    with pytest.raises(RuntimeError, match="Remote github is missing"):
+        gdeploy.ensure_manifest_remote(repo, "github", [str(source)], display_path="com/pyembed")
+
+    output = capsys.readouterr().out
+    source_url = str(source).replace("\\", "/")
+    assert "Manifest remote 'github' is missing in com/pyembed" in output
+    assert f"  Manifest: github -> {source}" in output
+    assert "  Existing:\n" in output
+    assert f"    origin -> {source_url} (same fetch URL)" in output
+    assert "    backup -> https://example.invalid/backup.git" in output
+
+
+def test_named_remote_mismatch_still_requires_confirmation(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source)
+    repo = git.Repo.clone_from(str(source), str(tmp_path / "target"))
+    repo.create_remote("github", "https://example.invalid/other.git")
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False))
+
+    with pytest.raises(RuntimeError, match="Remote differs"):
+        gdeploy.ensure_manifest_remote(repo, "github", [str(source)])
+    assert {remote.name for remote in repo.remotes} == {"origin", "github"}
 
 
 def test_deploy_fast_forwards_branch_without_upstream(tmp_path):
