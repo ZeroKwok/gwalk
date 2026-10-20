@@ -2,10 +2,12 @@
 
 ## v0.3.5
 
-优化 `gdeploy --commit`：当清单分支包含记录的提交时，改为附着分支并 reset，避免进入游离 HEAD；仅当分支不包含该提交时回退为游离检出。
+优化 `gdeploy --commit`：fetch 后验证清单提交可用，再以 `git switch --detach <commit>` 检出快照，不移动本地分支；工作树有未提交修改时停止检出。
 优化 `gdeploy`：清单未声明 `mode` 时按既有目标的实际布局（archive/mirror/bare/worktree）处理，避免对裸仓库执行 worktree 检出。
-优化 `gdeploy`：`--commit` 记录的提交在远端不存在时告警并保留分支顶端，不再报 `unable to read tree`。
+优化 `gdeploy`：`--commit` 缺少提交或本地对象库中找不到提交时明确报错，该仓库部署失败，不再报 `unable to read tree`。
 优化 `gdeploy` archive 判定对齐 `garchive`，要求 `.git` 内存在 `config.archive`。
+优化 `gdeploy` 部署时的 remote 校验：严格匹配清单中的 remote 名称；同名 URL 不一致或名称缺失时需确认同步，非交互模式可使用 `--sync-remotes`。
+优化 `gdeploy` remote 同步提示：显示相对工作空间的仓库路径，并列出清单与本地 remote 的名称和 URL；即使 URL 相同也不再静默复用不同名称的 remote。
 
 ## v0.3.4
 
