@@ -21,6 +21,7 @@ gdeploy --scan [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --listed [-d WORKSPACE] [MANIFEST]
 gdeploy --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
+gdeploy --scan --sync-remotes [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
 gdeploy --commit [-d WORKSPACE] [MANIFEST]
@@ -103,7 +104,7 @@ Root repo path: FoneToolBackup
 Nested repo path: FoneToolBackup/com/uiframe
 ```
 
-Detached HEAD repositories keep their `path` and `remote`, but omit `branch` and print a warning.
+Detached HEAD repositories are still scanned. They record the current `commit` and `branch: None`, replacing any stale branch name in an existing manifest, and print a warning. Deploy with `--commit` to restore that exact snapshot; without it, deployment does not use the recorded commit.
 
 If `describe` ends with `-dirty`, scan prints a yellow warning:
 
@@ -164,6 +165,7 @@ Listed-only scan:
 - New repositories discovered in the workspace are ignored and are not appended.
 - This is useful when the manifest intentionally tracks only a subset of a workspace and you only want to refresh branch, commit, describe, and remote state for that subset.
 - Existing merge behavior still applies for listed repositories, including preserving `post`.
+- Remote conflicts are checked only for listed repositories after the scan is filtered.
 
 ## Manifest Update Rules
 
@@ -172,13 +174,17 @@ Scan mode does not replace the whole manifest blindly. It merges scanned reposit
 Merge behavior:
 
 - Existing `variables` are preserved.
-- If a scanned repository already exists in the manifest, scanned fields update the manifest entry.
+- If a scanned repository already exists in the manifest, scanned fields update the manifest entry. Its `remote` field follows the conflict rules below.
 - Existing `post` is preserved when the same repository is updated by scan.
 - Repositories already in the manifest but not found by scan are preserved.
 - New scanned repositories are appended.
 - Final repository list is sorted by path.
 
-Because scan writes real Git remote URLs and branch names, a previously variable-based `remote` or `branch` may be overwritten. This is intentional. `post` is preserved because it cannot be discovered from Git state.
+Scan treats local Git configuration as the source for remote updates, but never changes that configuration. For each repository already in the manifest, it compares remote names and the local first fetch URL against the manifest's allowed URLs after variable expansion. A URL match under a different name is a conflict. If all selected remotes match, scan preserves the original manifest `remote` value, including variables and URL fallback lists. If the manifest has no remote value, a discovered local remote is added without a conflict prompt. New repositories are also added without a conflict prompt.
+
+On a conflict, scan shows the manifest and local name/URL pairs. Interactive `y` uses the scanned local remotes in the manifest; any other answer preserves the manifest `remote` while still updating other scanned fields such as `branch`, `commit`, and `describe`. Without an interactive terminal, a conflict stops the scan before any manifest write. `--scan --sync-remotes` approves all such replacements without individual prompts, but the final manifest diff and write confirmation still apply. It never updates local Git remotes. When `--remote NAME` filters scan results, approving a conflict replaces the old remote map with the filtered scanned map; unselected names are not retained.
+
+Scan may still overwrite variable-based fields such as `branch` when their current values differ. `post` is preserved because it cannot be discovered from Git state.
 
 Before writing, scan mode renders both the old manifest and the new manifest with the same formatter, then prints a unified diff:
 

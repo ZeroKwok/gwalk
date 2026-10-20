@@ -298,7 +298,8 @@ def scan_workspace(workspace, preferred_remotes=None):
         if branch:
             item["branch"] = branch
         elif not repo.bare:
-            cprint(f"Warning: skip detached branch for {item['path']}", "yellow", file=sys.stderr)
+            item["branch"] = None
+            cprint(f"Warning: detached HEAD: {path} ({item['commit'][:12]})", "yellow", file=sys.stderr)
 
         repositories.append(item)
 
@@ -334,7 +335,7 @@ def merge_repositories(old_repositories, scanned_repositories):
     return sorted(merged, key=lambda item: item["path"].lower())
 
 
-def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_only=False):
+def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_only=False, sync_remotes=False):
     old_manifest = load_manifest(manifest_file, missing=True)
     scanned_repositories = scan_workspace(workspace, preferred_remotes)
     if listed_only:
@@ -347,6 +348,56 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
             item for item in scanned_repositories
             if item.get("path") in listed
         ]
+    old_by_path = {
+        item["path"]: item
+        for item in old_manifest["repositories"]
+        if isinstance(item, dict) and item.get("path")
+    }
+    for scanned in scanned_repositories:
+        old_item = old_by_path.get(scanned["path"])
+        if not old_item or not old_item.get("remote"):
+            continue
+
+        manifest_remote = replace_variables(old_item["remote"], old_manifest, old_item, workspace)
+        local_remote = scanned.get("remote") or {}
+        matches = set(manifest_remote) == set(local_remote)
+        if matches:
+            for name, value in local_remote.items():
+                local_urls = value if isinstance(value, list) else [value]
+                allowed = manifest_remote[name]
+                allowed_urls = allowed if isinstance(allowed, list) else [allowed]
+                if not local_urls or local_urls[0].replace("\\", "/") not in {
+                    url.replace("\\", "/") for url in allowed_urls
+                }:
+                    matches = False
+                    break
+        if matches:
+            scanned["remote"] = old_item["remote"]
+            continue
+
+        cprint(f"Remote differs in {scanned['path']}", "yellow")
+        cprint("  Manifest:", "yellow")
+        for name, value in manifest_remote.items():
+            cprint(f"    {name} -> {value}", "yellow")
+        cprint("  Local:", "yellow")
+        for name, value in local_remote.items():
+            cprint(f"    {name} -> {value}", "yellow")
+        if not local_remote:
+            cprint("    <none>", "yellow")
+
+        if not sync_remotes:
+            if not sys.stdin.isatty():
+                cprint("Remote differs; use --sync-remotes to update the manifest", "red", file=sys.stderr)
+                return 1
+            try:
+                answer = input(f"Update manifest remotes for {scanned['path']}? [y/N] ").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer != "y":
+                scanned["remote"] = old_item["remote"]
+                continue
+        scanned["remote"] = local_remote
+
     new_manifest = {
         "variables": old_manifest.get("variables", []),
         "repositories": merge_repositories(old_manifest.get("repositories", []), scanned_repositories),
@@ -863,7 +914,7 @@ def main():
     parser.add_argument(
         "--sync-remotes",
         action="store_true",
-        help="approve updating mismatched existing remotes without prompting",
+        help="approve remote synchronization without prompting (scan: local to manifest; deploy: manifest to local)",
     )
     parser.add_argument(
         "--checkout",
@@ -883,7 +934,7 @@ def main():
 
     try:
         if args.scan:
-            return update_manifest(workspace, manifest, args.remote, args.listed)
+            return update_manifest(workspace, manifest, args.remote, args.listed, args.sync_remotes)
         if not os.path.exists(manifest):
             cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
             return 1

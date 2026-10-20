@@ -173,6 +173,34 @@ def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
     assert "Warning: dirty repository: demo" in output.out
 
 
+def test_scan_detached_head_replaces_stale_manifest_branch(tmp_path, monkeypatch, capsys):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path, "main")
+    repo.create_remote("origin", "https://example.com/demo.git")
+    commit = repo.head.commit.hexsha
+    repo.git.switch("--detach", commit)
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"origin": "https://example.com/demo.git"},
+            "branch": "main", "commit": commit,
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda: "y")
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+
+    repository = gdeploy.load_manifest(str(manifest_file))["repositories"][0]
+    assert repository["path"] == "demo"
+    assert repository["commit"] == commit
+    assert repository["branch"] is None
+    output = capsys.readouterr()
+    assert f"Warning: detached HEAD: demo ({commit[:12]})" in output.err
+    assert "skip detached branch" not in output.err
+
+
 def test_scan_workspace_records_gitfile_submodule(tmp_path, capsys):
     parent = tmp_path / "parent"
     child = parent / "child"
@@ -390,7 +418,9 @@ def test_update_manifest_listed_only_does_not_add_new_repositories(tmp_path, mon
     )
 
     monkeypatch.setattr("builtins.input", lambda: "y")
-    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file), listed_only=True) == 0
+    assert gdeploy.update_manifest(
+        str(tmp_path), str(manifest_file), listed_only=True, sync_remotes=True,
+    ) == 0
     manifest = gdeploy.load_manifest(str(manifest_file))
 
     assert [item["path"] for item in manifest["repositories"]] == ["listed"]
@@ -398,6 +428,104 @@ def test_update_manifest_listed_only_does_not_add_new_repositories(tmp_path, mon
     assert manifest["repositories"][0]["commit"] == listed_repo.head.commit.hexsha
     assert manifest["repositories"][0]["remote"] == {"origin": "https://example.com/listed.git"}
     assert manifest["repositories"][0]["post"] == "build"
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_scan_remote_name_conflict_keeps_or_updates_manifest(tmp_path, monkeypatch, capsys, answer):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path, "main")
+    url = "https://example.com/demo.git"
+    repo.create_remote("origin", url)
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{
+            "path": "demo", "remote": {"github": url}, "branch": "old", "post": "build",
+        }],
+    }), encoding="utf-8")
+    prompts = []
+    answers = iter([answer, "y"])
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or next(answers))
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+
+    updated = gdeploy.load_manifest(str(manifest_file))["repositories"][0]
+    assert updated["remote"] == ({"origin": url} if answer == "y" else {"github": url})
+    assert updated["branch"] == "main"
+    assert updated["commit"] == repo.head.commit.hexsha
+    assert updated["post"] == "build"
+    assert {remote.name for remote in repo.remotes} == {"origin"}
+    assert prompts == ["Update manifest remotes for demo? [y/N] ", ""]
+    output = capsys.readouterr().out
+    assert "Remote differs in demo" in output
+    assert "github -> https://example.com/demo.git" in output
+    assert "origin -> https://example.com/demo.git" in output
+
+
+def test_scan_remote_conflict_requires_approval_without_tty(tmp_path, monkeypatch, capsys):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path)
+    repo.create_remote("origin", "https://example.com/local.git")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    original = gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{"path": "demo", "remote": {"origin": "https://example.com/old.git"}}],
+    })
+    manifest_file.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False))
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 1
+    assert manifest_file.read_text(encoding="utf-8") == original
+    output = capsys.readouterr()
+    assert "Remote differs in demo" in output.out
+    assert "use --sync-remotes" in output.err
+
+
+def test_scan_sync_remotes_still_confirms_manifest_write(tmp_path, monkeypatch):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path)
+    repo.create_remote("origin", "https://example.com/local.git")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{"path": "demo", "remote": {"origin": "https://example.com/old.git"}}],
+    }), encoding="utf-8")
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or "n")
+    monkeypatch.setattr(sys, "argv", [
+        "gdeploy", "--scan", "--sync-remotes", "-d", str(tmp_path), str(manifest_file),
+    ])
+
+    assert gdeploy.main() == 1
+    assert prompts == [""]
+    assert gdeploy.load_manifest(str(manifest_file))["repositories"][0]["remote"] == {
+        "origin": "https://example.com/old.git"
+    }
+
+
+def test_scan_preserves_variable_remote_when_resolved_url_matches(tmp_path, monkeypatch, capsys):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path)
+    repo.create_remote("origin", "https://example.com/demo.git")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    scanned = gdeploy.scan_workspace(str(tmp_path))[0]
+    scanned["remote"] = {"origin": ["https://backup.invalid/demo.git", "{Host}/demo.git"]}
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [{"name": "Host", "value": "https://example.com"}],
+        "repositories": [scanned],
+    }), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("unexpected prompt"))
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    assert gdeploy.load_manifest(str(manifest_file))["repositories"][0]["remote"] == {
+        "origin": ["https://backup.invalid/demo.git", "{Host}/demo.git"]
+    }
+    assert "Manifest is up to date" in capsys.readouterr().out
 
 
 def test_deploy_manifest_clones_missing_repository(tmp_path):
