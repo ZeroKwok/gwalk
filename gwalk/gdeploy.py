@@ -220,8 +220,13 @@ def active_branch_name(repo):
         return ""
 
 
-def scan_workspace(workspace, preferred_remotes=None):
+def scan_workspace(workspace, preferred_remotes=None, manifest=None):
     preferred_remotes = preferred_remotes or []
+    known_repositories = {
+        item["path"]: item
+        for item in (manifest or {}).get("repositories", [])
+        if isinstance(item, dict) and item.get("path")
+    }
     repositories = []
     workspace = os.path.normpath(os.path.abspath(workspace))
     root_is_repo = (
@@ -298,7 +303,26 @@ def scan_workspace(workspace, preferred_remotes=None):
         if branch:
             item["branch"] = branch
         elif not repo.bare:
-            item["branch"] = None
+            previous = known_repositories.get(path)
+            previous_branch = (
+                replace_variables(previous.get("branch"), manifest, previous, workspace)
+                if previous else None
+            )
+            if previous_branch:
+                refs = [f"refs/heads/{previous_branch}"]
+                remote_value = replace_variables(previous.get("remote"), manifest, previous, workspace)
+                remote_name, _ = select_remote_entry(remote_value, preferred_remotes)
+                if remote_name:
+                    refs.append(f"refs/remotes/{remote_name}/{previous_branch}")
+                for ref in refs:
+                    try:
+                        repo.git.merge_base("--is-ancestor", item["commit"], ref)
+                        item["branch"] = previous["branch"]
+                        break
+                    except git.exc.GitCommandError:
+                        pass
+            if "branch" not in item:
+                item["branch"] = None
             cprint(f"Warning: detached HEAD: {path} ({item['commit'][:12]})", "yellow", file=sys.stderr)
 
         repositories.append(item)
@@ -337,7 +361,7 @@ def merge_repositories(old_repositories, scanned_repositories):
 
 def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_only=False, sync_remotes=False):
     old_manifest = load_manifest(manifest_file, missing=True)
-    scanned_repositories = scan_workspace(workspace, preferred_remotes)
+    scanned_repositories = scan_workspace(workspace, preferred_remotes, old_manifest)
     if listed_only:
         listed = {
             item.get("path")

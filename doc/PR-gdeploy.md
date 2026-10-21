@@ -104,7 +104,7 @@ Root repo path: FoneToolBackup
 Nested repo path: FoneToolBackup/com/uiframe
 ```
 
-Detached HEAD repositories are still scanned. They record the current `commit` and `branch: None`, replacing any stale branch name in an existing manifest, and print a warning. Deploy with `--commit` to restore that exact snapshot; without it, deployment does not use the recorded commit.
+Detached HEAD repositories are still scanned and record their current `commit`. If an existing manifest names a branch containing that commit, scan preserves the original `branch` value (including variables). It checks the local branch, then the selected remote's locally available tracking branch, without fetching. Otherwise it writes `branch: None`, replacing any stale branch name. A detached HEAD warning is printed in either case. Deploy with `--commit` to restore the exact snapshot; without it, deployment does not use the recorded commit and may advance the recorded branch to its tip.
 
 If `describe` ends with `-dirty`, scan prints a yellow warning:
 

@@ -173,7 +173,7 @@ def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
     assert "Warning: dirty repository: demo" in output.out
 
 
-def test_scan_detached_head_replaces_stale_manifest_branch(tmp_path, monkeypatch, capsys):
+def test_scan_detached_head_keeps_manifest_branch_when_commit_is_branch_tip(tmp_path, monkeypatch, capsys):
     repo_path = tmp_path / "demo"
     repo_path.mkdir()
     repo = make_repo(repo_path, "main")
@@ -195,10 +195,77 @@ def test_scan_detached_head_replaces_stale_manifest_branch(tmp_path, monkeypatch
     repository = gdeploy.load_manifest(str(manifest_file))["repositories"][0]
     assert repository["path"] == "demo"
     assert repository["commit"] == commit
-    assert repository["branch"] is None
+    assert repository["branch"] == "main"
     output = capsys.readouterr()
     assert f"Warning: detached HEAD: demo ({commit[:12]})" in output.err
     assert "skip detached branch" not in output.err
+
+
+def test_scan_detached_head_keeps_manifest_branch_when_commit_is_ancestor(tmp_path, monkeypatch):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path, "main")
+    commit = repo.head.commit.hexsha
+    (repo_path / "README.md").write_text("next\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("next")
+    repo.git.switch("--detach", commit)
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [{"name": "TargetBranch", "value": "main"}],
+        "repositories": [{"path": "demo", "branch": "{TargetBranch}", "commit": commit}],
+    }), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda: "y")
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    repository = gdeploy.load_manifest(str(manifest_file))["repositories"][0]
+    assert repository["branch"] == "{TargetBranch}"
+    assert repository["commit"] == commit
+
+
+def test_scan_detached_head_clears_manifest_branch_when_commit_is_unrelated(tmp_path, monkeypatch):
+    repo_path = tmp_path / "demo"
+    repo_path.mkdir()
+    repo = make_repo(repo_path, "main")
+    repo.git.switch("-c", "side")
+    (repo_path / "README.md").write_text("side\n", encoding="utf-8")
+    repo.index.add(["README.md"])
+    repo.index.commit("side")
+    commit = repo.head.commit.hexsha
+    repo.git.switch("--detach", commit)
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{"path": "demo", "branch": "main", "commit": commit}],
+    }), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda: "y")
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    repository = gdeploy.load_manifest(str(manifest_file))["repositories"][0]
+    assert repository["branch"] is None
+    assert repository["commit"] == commit
+
+
+def test_scan_detached_head_checks_selected_remote_tracking_branch(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    make_repo(source, "main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = git.Repo.clone_from(str(source), str(workspace / "demo"))
+    commit = repo.head.commit.hexsha
+    repo.git.switch("--detach", commit)
+    repo.git.branch("-D", "main")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({
+        "variables": [],
+        "repositories": [{"path": "demo", "branch": "main", "commit": commit,
+                          "remote": {"origin": str(source)}}],
+    }), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda: "y")
+
+    assert gdeploy.update_manifest(str(workspace), str(manifest_file)) == 0
+    assert gdeploy.load_manifest(str(manifest_file))["repositories"][0]["branch"] == "main"
 
 
 def test_scan_workspace_records_gitfile_submodule(tmp_path, capsys):

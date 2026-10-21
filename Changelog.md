@@ -9,7 +9,7 @@
 优化 `gdeploy` 部署时的 remote 校验：严格匹配清单中的 remote 名称；同名 URL 不一致或名称缺失时需确认同步，非交互模式可使用 `--sync-remotes`。
 优化 `gdeploy` remote 同步提示：显示相对工作空间的仓库路径，并列出清单与本地 remote 的名称和 URL；即使 URL 相同也不再静默复用不同名称的 remote。
 优化 `gdeploy --scan`：比较清单与本地 remote，冲突时交互确认；`--scan --sync-remotes` 批量采用本地 remote 更新清单，但仍需确认最终差异，且不修改本地 Git 配置。
-修复 `gdeploy --scan` 遇到游离 HEAD 时保留旧清单分支名的问题：记录当前提交并写入 `branch: None`，同时给出明确警告。
+优化 `gdeploy --scan` 对游离 HEAD 的处理：始终记录当前提交；若该提交属于清单分支则保留分支记录，否则写入 `branch: None`，并给出明确警告。
 
 ## v0.3.4
 
