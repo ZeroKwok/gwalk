@@ -712,7 +712,7 @@ def test_deploy_manifest_can_checkout_manifest_commit(tmp_path):
     assert deployed.head.commit.hexsha == first_commit
 
 
-def test_deploy_manifest_detaches_without_moving_branch(tmp_path):
+def test_deploy_manifest_attaches_and_rewinds_published_branch(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     repo = make_repo(source, "main")
@@ -745,8 +745,12 @@ def test_deploy_manifest_detaches_without_moving_branch(tmp_path):
 
     deployed = git.Repo(workspace / "demo")
     assert deployed.head.commit.hexsha == first_commit
-    assert deployed.head.is_detached == True
-    assert deployed.heads.main.commit.hexsha == repo.head.commit.hexsha
+    assert deployed.head.is_detached == False
+    assert deployed.active_branch.name == "main"
+    assert deployed.heads.main.commit.hexsha == first_commit
+    assert deployed.heads.main.tracking_branch().name == "origin/main"
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert deployed.head.commit.hexsha == repo.head.commit.hexsha
 
 
 def test_deploy_manifest_detaches_when_commit_not_on_branch(tmp_path):

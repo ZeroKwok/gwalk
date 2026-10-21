@@ -322,9 +322,16 @@ Commit checkout:
 
 - By default, deploy does not use the manifest `commit` field.
 - With `--commit`, deploy fetches the selected remote and verifies that the manifest `commit` is available in the local object database. A missing field or unavailable commit fails that repository.
-- It then runs `git switch --detach <commit>` without pulling or moving a named local branch. Detached HEAD is the expected snapshot state.
-- Existing worktree changes, including dirty submodules, fail the checkout instead of being discarded.
+- The worktree must be clean, including the index, untracked files, and submodules. A merge, rebase, cherry-pick, or revert in progress also fails the checkout. Git's own checkout protection is not a substitute: nonconflicting edits could otherwise survive the switch.
+- A manifest branch must be a valid literal local branch name. Attachment uses only the selected remote's freshly fetched `refs/remotes/<remote>/<branch>`, not an arbitrary existing upstream.
+- When that remote branch contains the manifest commit, and the existing local target branch has no commits outside it, deploy runs `git switch -C <branch> <commit>`. A missing local branch is created; a branch already at the commit uses plain `git switch <branch>`. A published local tip may move backwards to the snapshot, which is reported in the checkout output.
+- A missing upstream is set to the selected remote branch after attachment. An existing different upstream is never overwritten.
+- If the manifest has no branch, the selected remote branch is unavailable or does not contain the commit, the local target branch has unpushed/divergent commits, or its upstream differs, deploy prints a yellow explanation and runs `git switch --detach <commit>`, preserving the local branch and its configuration.
+- Before leaving a different detached HEAD, deploy checks whether it is reachable from any local branch, remote-tracking branch, or tag. If not, checkout fails and asks the user to save a branch first. Reflog entries alone do not count as saved references. Keeping the same detached commit is allowed.
+- Git handles switch-level restrictions, such as a branch being checked out in another worktree. A failed switch fails deployment; it does not trigger a forced checkout or a detached retry. No `pull`, `reset --hard`, push, or automatic backup branch is used by the snapshot checkout policy.
+- The final HEAD always equals the manifest commit on success. Attached snapshots may be behind the remote; another `--commit` deployment keeps that snapshot, while normal branch deployment may fast-forward it. Submodules and `post` run only after checkout succeeds.
 - Archive repositories apply the commit only when `--checkout` is also specified; bare and mirror repositories remain bare.
+- Archive snapshot restore performs commit, operation, and detached-HEAD safety checks before conversion, materializes the commit without moving a branch, fetches with the restored configuration, and then applies the same attachment policy as normal worktrees. Its manifest `mode` is unchanged.
 
 By default, the manifest `name` determines the project subdirectory:
 

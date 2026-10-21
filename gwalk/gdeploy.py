@@ -631,15 +631,67 @@ def commit_available(repo, commit):
         return False
 
 
-def checkout_commit(repo, commit):
+def checkout_commit(repo, commit, branch, remote_name, restore_archive=False):
     if not commit:
         raise RuntimeError(f"Manifest commit is missing: {repo.working_dir}")
 
     if not commit_available(repo, commit):
         raise RuntimeError(f"Manifest commit not found: {commit}")
-    if repo.is_dirty(untracked_files=True, submodules=True):
+    if not repo.bare and repo.is_dirty(untracked_files=True, submodules=True):
         raise RuntimeError(f"Working tree is dirty: {repo.working_dir}")
-    repo.git.switch("--detach", commit)
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
+        if os.path.exists(os.path.join(repo.git_dir, marker)):
+            raise RuntimeError(f"Git operation in progress ({marker}): {repo.working_dir}")
+    if branch:
+        if repo.git.check_ref_format("--branch", branch) != branch:
+            raise RuntimeError(f"Invalid manifest branch: {branch}")
+
+    commit = repo.commit(commit).hexsha
+    if repo.head.is_valid() and repo.head.is_detached and repo.head.commit.hexsha != commit:
+        current = repo.head.commit.hexsha
+        references = repo.git.for_each_ref(
+            f"--contains={current}", "--format=%(refname)",
+            "refs/heads", "refs/remotes", "refs/tags",
+        )
+        if not references:
+            raise RuntimeError(f"Detached HEAD has unreferenced commits; save a branch before deploying: {current}")
+
+    if restore_archive:
+        # Materialize the snapshot without moving any branch before applying the same policy.
+        garchive.restore(repo.git_dir, None, commit, here=True)
+        repo = git.Repo(os.path.dirname(repo.git_dir))
+        fetch_repository(repo, remote_name)
+
+    remote_branch = f"{remote_name}/{branch}" if remote_name and branch else None
+    remote_ref = f"refs/remotes/{remote_branch}" if remote_branch else None
+    local = next((head for head in repo.heads if head.name == branch), None)
+    reason = None
+    if not branch:
+        reason = "manifest branch is not specified"
+    elif not remote_ref or not commit_available(repo, remote_ref):
+        reason = f"selected remote branch is unavailable: {remote_branch or branch}"
+    elif not repo.is_ancestor(commit, remote_ref):
+        reason = f"manifest commit is not contained in {remote_branch}"
+    elif local and not repo.is_ancestor(local.commit, remote_ref):
+        reason = f"local branch {branch} has commits outside {remote_branch}; preserving its tip"
+    elif local and local.tracking_branch() and local.tracking_branch().path != remote_ref:
+        reason = f"local branch {branch} tracks {local.tracking_branch().name}, not {remote_branch}"
+
+    if reason:
+        cprint(f"Warning: detached checkout: {reason}", "yellow", file=sys.stderr)
+        repo.git.switch("--detach", commit)
+        cprint(f"Checkout detached {commit[:12]}", "green")
+        return
+
+    previous = local.commit.hexsha if local else None
+    if previous == commit:
+        repo.git.switch(branch)
+    else:
+        repo.git.switch("-C", branch, commit)
+    if not repo.heads[branch].tracking_branch():
+        repo.git.branch(f"--set-upstream-to={remote_branch}", branch)
+    detail = f" (previous tip {previous[:12]})" if previous and previous != commit else ""
+    cprint(f"Checkout {branch} at {commit[:12]}{detail}", "green")
 
 
 def update_submodules(repo):
@@ -960,23 +1012,21 @@ def deploy_manifest(
                 if mode == "archive" and checkout_archive:
                     ensure_checkout_target(repository, branch, commit, checkout_to_commit)
                     if repo.bare:
-                        if checkout_to_commit and not commit_available(repo, commit):
-                            raise RuntimeError(f"Manifest commit not found: {commit}")
-                        garchive.restore(
-                            archive_git_dir(target), None,
-                            commit if checkout_to_commit else branch, here=True,
-                        )
+                        if checkout_to_commit:
+                            checkout_commit(repo, commit, branch, remote_name, restore_archive=True)
+                        else:
+                            garchive.restore(archive_git_dir(target), None, branch, here=True)
                         repo = git.Repo(target)
-                    if checkout_to_commit:
-                        checkout_commit(repo, commit)
-                    else:
+                    elif checkout_to_commit:
+                        checkout_commit(repo, commit, branch, remote_name)
+                    if not checkout_to_commit:
                         fetch_repository(repo, remote_name)
                         checkout_branch(repo, branch, remote_name)
                     update_submodules(repo)
                     should_run_post = True
                 elif mode == "archive" and not repo.bare:
                     if checkout_to_commit:
-                        checkout_commit(repo, commit)
+                        checkout_commit(repo, commit, branch, remote_name)
                     else:
                         checkout_branch(repo, branch, remote_name)
                     update_submodules(repo)
@@ -1005,7 +1055,7 @@ def deploy_manifest(
                 repo = clone_repository(remotes, target, remote_name)
 
             if checkout_to_commit:
-                checkout_commit(repo, commit)
+                checkout_commit(repo, commit, branch, remote_name)
             else:
                 checkout_branch(repo, branch, remote_name)
 
@@ -1069,7 +1119,7 @@ def main():
     parser.add_argument(
         "--commit",
         action="store_true",
-        help="checkout repositories to manifest commits with detached HEAD",
+        help="checkout manifest commits, attaching to manifest branches when safe",
     )
     parser.add_argument(
         "--sync-remotes",
