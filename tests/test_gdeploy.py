@@ -127,7 +127,7 @@ def test_scan_workspace_uses_repo_walk(tmp_path):
     }
 
 
-def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
+def test_scan_git_workspace_records_root_as_dot(tmp_path):
     workspace = tmp_path / "FoneToolBackup"
     workspace.mkdir()
     repo = make_repo(workspace, "dev")
@@ -137,7 +137,7 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
 
     assert repositories == [
         {
-            "path": "FoneToolBackup",
+            "path": ".",
             "type": "repository",
             "commit": repo.head.commit.hexsha,
             "describe": repo.git.describe("--tags", "--dirty", "--always"),
@@ -147,7 +147,7 @@ def test_scan_git_workspace_uses_workspace_name_for_root_repo(tmp_path):
     ]
 
 
-def test_scan_bare_workspace_uses_workspace_name_for_root_repo(tmp_path):
+def test_scan_bare_workspace_records_root_as_dot(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     make_repo(source, "main")
@@ -156,7 +156,7 @@ def test_scan_bare_workspace_uses_workspace_name_for_root_repo(tmp_path):
 
     repositories = gdeploy.scan_workspace(str(workspace))
 
-    assert repositories[0]["path"] == "Backup.git"
+    assert repositories[0]["path"] == "."
     assert repositories[0]["mode"] == "bare"
 
 
@@ -182,6 +182,7 @@ def test_scan_detached_head_keeps_manifest_branch_when_commit_is_branch_tip(tmp_
     repo.git.switch("--detach", commit)
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{
             "path": "demo", "remote": {"origin": "https://example.com/demo.git"},
@@ -212,6 +213,7 @@ def test_scan_detached_head_keeps_manifest_branch_when_commit_is_ancestor(tmp_pa
     repo.git.switch("--detach", commit)
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [{"name": "TargetBranch", "value": "main"}],
         "repositories": [{"path": "demo", "branch": "{TargetBranch}", "commit": commit}],
     }), encoding="utf-8")
@@ -235,6 +237,7 @@ def test_scan_detached_head_clears_manifest_branch_when_commit_is_unrelated(tmp_
     repo.git.switch("--detach", commit)
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{"path": "demo", "branch": "main", "commit": commit}],
     }), encoding="utf-8")
@@ -258,6 +261,7 @@ def test_scan_detached_head_checks_selected_remote_tracking_branch(tmp_path, mon
     repo.git.branch("-D", "main")
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{"path": "demo", "branch": "main", "commit": commit,
                           "remote": {"origin": str(source)}}],
@@ -437,7 +441,7 @@ def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch,
     describe = repo.git.describe("--tags", "--dirty", "--always")
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(
-        "{'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
+        "{'schema_version': 1, 'name': 'Project', 'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
         f"'https://example.com/demo.git'}}, 'branch': 'main', 'commit': '{commit}', "
         f"'describe': '{describe}', 'type': 'repository'}}]}}\n",
         encoding="utf-8",
@@ -469,6 +473,7 @@ def test_update_manifest_listed_only_does_not_add_new_repositories(tmp_path, mon
     manifest_file.write_text(
         gdeploy.render_manifest(
             {
+                "schema_version": 1, "name": "Project",
                 "variables": [],
                 "repositories": [
                     {
@@ -506,6 +511,7 @@ def test_scan_remote_name_conflict_keeps_or_updates_manifest(tmp_path, monkeypat
     repo.create_remote("origin", url)
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{
             "path": "demo", "remote": {"github": url}, "branch": "old", "post": "build",
@@ -538,6 +544,7 @@ def test_scan_remote_conflict_requires_approval_without_tty(tmp_path, monkeypatc
     repo.create_remote("origin", "https://example.com/local.git")
     manifest_file = tmp_path / "gdeploy.manifest"
     original = gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{"path": "demo", "remote": {"origin": "https://example.com/old.git"}}],
     })
@@ -558,6 +565,7 @@ def test_scan_sync_remotes_still_confirms_manifest_write(tmp_path, monkeypatch):
     repo.create_remote("origin", "https://example.com/local.git")
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [{"path": "demo", "remote": {"origin": "https://example.com/old.git"}}],
     }), encoding="utf-8")
@@ -583,6 +591,7 @@ def test_scan_preserves_variable_remote_when_resolved_url_matches(tmp_path, monk
     scanned = gdeploy.scan_workspace(str(tmp_path))[0]
     scanned["remote"] = {"origin": ["https://backup.invalid/demo.git", "{Host}/demo.git"]}
     manifest_file.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "Project",
         "variables": [{"name": "Host", "value": "https://example.com"}],
         "repositories": [scanned],
     }), encoding="utf-8")
@@ -841,7 +850,7 @@ def test_deploy_existing_remote_requires_approval_and_can_sync(tmp_path, capsys)
     assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
     assert deployed.head.commit.hexsha == original_commit
     output = capsys.readouterr()
-    assert "Remote 'origin' URL differs in demo" in output.out
+    assert "Remote 'origin' URL differs in ." in output.out
     assert f"  Manifest: origin -> {replacement}" in output.out
     assert "  Existing: origin -> " in output.out
     assert "Remote differs" in output.err
@@ -908,7 +917,7 @@ def test_deploy_requires_selected_remote_name_even_when_url_matches(tmp_path, mo
     assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 1
     output = capsys.readouterr()
     source_url = str(source).replace("\\", "/")
-    assert "Manifest remote 'github' is missing in demo" in output.out
+    assert "Manifest remote 'github' is missing in ." in output.out
     assert f"  Manifest: github -> {source}" in output.out
     assert f"  Existing: origin -> {source_url} (same fetch URL)" in output.out
     assert "Remote github is missing" in output.err
@@ -1244,6 +1253,7 @@ def test_deploy_manifest_clones_mirror_and_bare_modes(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     manifest = {
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [
             {
@@ -1261,7 +1271,7 @@ def test_deploy_manifest_clones_mirror_and_bare_modes(tmp_path):
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(gdeploy.render_manifest(manifest), encoding="utf-8")
 
-    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file)) == 0
+    assert gdeploy.deploy_manifest(str(workspace), str(manifest_file), here=True) == 0
     mirror = git.Repo(workspace / "mirror.git")
     bare = git.Repo(workspace / "bare.git")
 
@@ -1319,7 +1329,7 @@ def test_deploy_manifest_skips_checkout_for_mirror_and_bare(tmp_path, capsys):
     ) == 0
     output = capsys.readouterr()
 
-    assert "Skip checkout for mirror repository: mirror.git" in output.out
+    assert "Skip checkout for mirror repository: ." in output.out
     assert git.Repo(workspace / "mirror.git").bare == True
 
 
@@ -1327,6 +1337,7 @@ def test_deploy_manifest_skips_submodule_entries(tmp_path, capsys):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     manifest = {
+        "schema_version": 1, "name": "Project",
         "variables": [],
         "repositories": [
             {

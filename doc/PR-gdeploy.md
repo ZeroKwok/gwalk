@@ -10,8 +10,10 @@
 Default manifest path is:
 
 ```text
-<workspace>/gdeploy.manifest
+<directory>/gdeploy.manifest
 ```
+
+`--directory` defaults to the current directory. Scan treats it as the actual project root. Deploy normally creates a project subdirectory using the manifest `name`; `--here` uses the directory itself. Manifest lookup occurs before choosing the deployment project root and does not change with `name`.
 
 CLI:
 
@@ -37,6 +39,8 @@ Top-level structure:
 
 ```python
 {
+    'schema_version': 1,
+    'name': 'FoneTool',
     'variables': [
         {
             'name': 'Host',
@@ -44,6 +48,11 @@ Top-level structure:
         },
     ],
     'repositories': [
+        {
+            'path': '.',
+            'remote': {'origin': '{Host}/{RepositoryName}.git'},
+            'branch': 'dev',
+        },
         {
             'path': 'com/uiframe',
             'mode': 'archive',
@@ -60,9 +69,11 @@ Top-level structure:
 }
 ```
 
+`schema_version` is an integer independent of the tool version; the current schema is `1`. `name` is the project name and default deployment directory name. It must be a single nonempty directory name, not a path. Scan preserves an existing name; a newly generated manifest uses the scan directory name. A project containing multiple independent repositories uses their relative paths and does not need a `path: '.'` entry.
+
 Repository fields:
 
-- `path`: repository directory relative to workspace.
+- `path`: repository directory relative to the project root. The root repository is `.`; children are `bin`, `com/uiframe`, etc. Physical project directory names never appear as a path prefix. Absolute paths, `..` traversal, and duplicate repository paths are rejected.
 - `mode`: optional repository layout. Missing means deploy detects the actual layout of an existing target before defaulting to a normal worktree repository. Supported values are `archive`, `mirror`, and `bare`.
 - `remote`: named remote map. Values may be a string URL or a list of URL fallbacks.
 - `branch`: optional target branch.
@@ -77,9 +88,21 @@ Variable replacement applies to `remote`, `branch`, `commit`, and `post`.
 Supported variables:
 
 - Manifest variables: `{'name': 'Host', 'value': '...'}` can be used as `{Host}`.
-- `{RepositoryName}`: basename of the repository path.
-- `{RepositoryPath}`: repository path relative to workspace.
-- `{Workspace}`: absolute workspace path.
+- `{RepositoryName}`: basename of the repository path; for `path: '.'`, the manifest `name`.
+- `{RepositoryPath}`: project-relative repository path, including `.` for the root.
+- `{Workspace}`: absolute actual project root, after deploy has applied `name` or `--here`.
+
+## Manifest Upgrade
+
+`upgrade_manifest(manifest, default_name=None)` returns a validated schema-1 copy in memory. It never writes a file or mutates its argument. Deploy and scan call it before processing repositories. Unsupported, non-integer, or future schema versions fail before any Git operations. No version field (or explicit `0`) means the unversioned Python-literal manifest; old `.conf` formats are not supported.
+
+For an unversioned manifest with a unique root repository entry, upgrade derives `name` from that entry's basename, converts its `path` to `.`, and removes that full root prefix from descendant `path` and submodule `parent` values. An existing explicit `name` is preserved. For an already-relative root `.` or an empty manifest, the fallback name is the scan directory name, or the manifest's parent directory name during deployment. Other fields, including variables, `post`, mode, and extra metadata, are preserved.
+
+If the old root cannot be identified reliably (for example, multiple roots or sibling paths whose root entry is absent), automatic upgrade fails with instructions to specify schema 1, a project name, and project-relative paths explicitly. Upgrade also compares expanded `remote`, `branch`, `commit`, and `post` values under the old and new path rules. A change caused by path-dependent variables such as `{RepositoryPath}` or `{Workspace}` requires manual review and stops automatic upgrade rather than silently changing a URL or command.
+
+Deployment only uses the upgraded data and leaves the source file untouched. Scan compares the original manifest data with the upgraded, scanned result, so schema changes appear in the same diff as repository changes. Canceling any scan write leaves the original file untouched and creates no backup. Only a confirmed scan persists the upgrade.
+
+When a confirmed scan upgrades an existing unversioned file, it first saves the original bytes as `<manifest>.backup.<timestamp>`, then writes a same-directory temporary file and atomically replaces the manifest. The original comments are preserved in the backup; serialization does not retain comments in the new file. Backup or write failure stops the operation without replacing the original. Current-schema scans do not create upgrade backups, and an unchanged current-schema manifest is not rewritten.
 
 ## Scan Rules
 
@@ -87,21 +110,22 @@ Scan mode uses `gwalk.RepoWalk(workspace, recursive=True)` to discover repositor
 
 For each repository, scan records:
 
-- `path`: relative path from workspace, using `/` separators.
+- `path`: relative path from the actual project root, using `/` separators.
 - `mode`: omitted for normal worktree repositories; recorded as `archive`, `mirror`, or `bare` for non-worktree layouts.
 - `remote`: Git remotes by name.
 - `branch`: active branch name.
 - `commit`: current `HEAD` commit ID.
 - `describe`: output of `git describe --tags --dirty --always`; empty string if Git cannot describe the repository.
 
-When the scan workspace itself is a Git repository root, the root repository path is written as the workspace directory name instead of `.`. Nested repositories are written under that name.
+The root repository is always recorded as `.`, independent of the physical project directory name. Scan uses the directory itself as the project root; `--scan --here` is equivalent to ordinary scan.
 
 Example:
 
 ```text
-Workspace: H:\Projects\FoneToolBackup
-Root repo path: FoneToolBackup
-Nested repo path: FoneToolBackup/com/uiframe
+Project directory: H:\Projects\FoneToolBackup
+Manifest name: FoneTool
+Root repo path: .
+Nested repo path: com/uiframe
 ```
 
 Detached HEAD repositories are still scanned and record their current `commit`. If an existing manifest names a branch containing that commit, scan preserves the original `branch` value (including variables). It checks the local branch, then the selected remote's locally available tracking branch, without fetching. Otherwise it writes `branch: None`, replacing any stale branch name. A detached HEAD warning is printed in either case. Deploy with `--commit` to restore the exact snapshot; without it, deployment does not use the recorded commit and may advance the recorded branch to its tip.
@@ -115,16 +139,16 @@ Warning: dirty repository: com/uiframe (v1.2.0-3-g7f4a9f2-dirty)
 Git submodules are written to the manifest as visible entries, but marked as submodules. If scan encounters a repository represented by a `.git` file, it records `type: 'submodule'`, records its nearest parent repository path, and prints a yellow warning:
 
 ```text
-Warning: found git submodule: FoneTool/com/library
+Warning: found git submodule: com/library
 ```
 
 Example:
 
 ```python
 {
-    'path': 'FoneTool/com/library',
+    'path': 'com/library',
     'type': 'submodule',
-    'parent': 'FoneTool',
+    'parent': '.',
     'commit': '...',
     'describe': '...',
     'remote': {'origin': '...'},
@@ -166,6 +190,8 @@ Listed-only scan:
 - This is useful when the manifest intentionally tracks only a subset of a workspace and you only want to refresh branch, commit, describe, and remote state for that subset.
 - Existing merge behavior still applies for listed repositories, including preserving `post`.
 - Remote conflicts are checked only for listed repositories after the scan is filtered.
+- The manifest must exist and list at least one repository. Missing or empty manifests fail before scanning; zero matches fail with path examples and do not offer a write.
+- Missing listed repositories are named and their entries preserved. Matched repositories can still be updated after confirmation, but an incomplete scan returns `1`. It does not claim the manifest is up to date while listed repositories are missing.
 
 ## Manifest Update Rules
 
@@ -173,7 +199,7 @@ Scan mode does not replace the whole manifest blindly. It merges scanned reposit
 
 Merge behavior:
 
-- Existing `variables` are preserved.
+- Existing `name`, `schema_version`, `variables`, and extra top-level metadata are preserved in the upgraded structure.
 - If a scanned repository already exists in the manifest, scanned fields update the manifest entry. Its `remote` field follows the conflict rules below.
 - Existing `post` is preserved when the same repository is updated by scan.
 - Repositories already in the manifest but not found by scan are preserved.
@@ -245,16 +271,16 @@ With `--remote missing`, deploy falls back to the first remote in the manifest e
 
 ## Deploy Flow
 
-For each repository entry:
+Parent repositories are processed before nested repositories, even if entries appear in the opposite order. For each repository entry:
 
 1. If `type` is `submodule`, skip independent deployment and print:
 
    ```text
-   Skip submodule: FoneTool/com/library (managed by FoneTool)
+   Skip submodule: com/library (managed by .)
    ```
 
 2. Resolve variables in `remote`, `branch`, and `post`.
-3. Compute target path as `<workspace>/<path>`.
+3. Compute target path as `<project root>/<path>`.
 4. If target does not exist:
    - Require at least one selected remote URL.
    - Create the parent directory.
@@ -296,24 +322,28 @@ Commit checkout:
 - Existing worktree changes, including dirty submodules, fail the checkout instead of being discarded.
 - Archive repositories apply the commit only when `--checkout` is also specified; bare and mirror repositories remain bare.
 
-By default, a manifest root path such as `FoneToolBackup` deploys into a subdirectory:
+By default, the manifest `name` determines the project subdirectory:
 
 ```text
-Workspace: H:\Projects
-Path:      FoneToolBackup
-Target:    H:\Projects\FoneToolBackup
+Directory: H:\Projects
+Name:      FoneTool
+Path:      .
+Target:    H:\Projects\FoneTool
 ```
 
-With `-H` or `--here`, the first path component is mapped to the workspace itself:
+With `-H` or `--here`, the actual project root is the specified directory. The name remains project metadata and repository paths do not change:
 
 ```text
-Workspace: H:\Projects\FoneToolBackup
-Path:      FoneToolBackup
+Directory: H:\Projects\FoneToolBackup
+Name:      FoneTool
+Path:      .
 Target:    H:\Projects\FoneToolBackup
 
-Path:      FoneToolBackup/com/uiframe
+Path:      com/uiframe
 Target:    H:\Projects\FoneToolBackup\com\uiframe
 ```
+
+This rule also applies to a project with several independent repositories and no root Git repository. No unique-root inference or prefix mapping is needed for schema 1. Worktree, archive, mirror, and bare modes all use the same project-root-relative layout. Nonempty non-Git clone targets remain unsupported.
 
 Branch handling:
 

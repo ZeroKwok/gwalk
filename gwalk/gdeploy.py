@@ -7,13 +7,17 @@
 
 import argparse
 import ast
+import copy
+from datetime import datetime
 import difflib
 import os
 import pprint
+from pathlib import PurePosixPath, PureWindowsPath
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 import git
@@ -24,15 +28,95 @@ from . import gwalk
 
 
 DefaultManifest = "gdeploy.manifest"
+ManifestSchemaVersion = 1
+
+
+def normalize_repository_path(path):
+    if not isinstance(path, str) or not path:
+        raise RuntimeError(f"Invalid repository path: {path!r}")
+    path = path.replace("\\", "/")
+    if PurePosixPath(path).is_absolute() or PureWindowsPath(path).drive or ".." in path.split("/"):
+        raise RuntimeError(f"Repository path must stay relative to the project: {path}")
+    return str(PurePosixPath(path))
 
 
 def normalize_manifest(manifest):
     for repository in manifest.get("repositories", []):
-        if isinstance(repository, dict) and "remote" in repository:
+        if not isinstance(repository, dict):
+            continue
+        if "path" in repository:
+            repository["path"] = normalize_repository_path(repository["path"])
+        if repository.get("parent"):
+            repository["parent"] = normalize_repository_path(repository["parent"])
+        if "remote" in repository:
             remote = repository["remote"]
             if isinstance(remote, str) or isinstance(remote, list):
                 repository["remote"] = {"origin": remote}
     return manifest
+
+
+def upgrade_manifest(manifest, default_name=None):
+    """Return a validated schema-1 copy without writing the source manifest."""
+    if not isinstance(manifest, dict):
+        raise RuntimeError("Manifest root must be a dict")
+    version = manifest.get("schema_version", 0)
+    if type(version) is not int or version not in (0, ManifestSchemaVersion):
+        raise RuntimeError(f"Unsupported manifest schema version: {version!r}")
+    if not isinstance(manifest.get("repositories", []), list) or not isinstance(manifest.get("variables", []), list):
+        raise RuntimeError("Manifest variables and repositories must be lists")
+    
+    original = normalize_manifest(copy.deepcopy(manifest))
+    upgraded = copy.deepcopy(original)
+    upgraded.setdefault("variables", [])
+    upgraded.setdefault("repositories", [])
+    repositories = upgraded["repositories"]
+    if not isinstance(repositories, list) or not isinstance(upgraded["variables"], list):
+        raise RuntimeError("Manifest variables and repositories must be lists")
+    if any(not isinstance(item, dict) or "path" not in item for item in repositories):
+        raise RuntimeError("Every manifest repository needs a path")
+    paths = [item["path"] for item in repositories]
+    if len({os.path.normcase(path) for path in paths}) != len(paths):
+        raise RuntimeError("Manifest contains duplicate repository paths")
+    
+    if version == 0:
+        roots = [item["path"] for item in repositories if item.get("type") != "submodule"
+                 and all(item["path"] == "." or path == item["path"]
+                         or path.startswith(item["path"] + "/") for path in paths)]
+        if repositories and len(roots) != 1:
+            raise RuntimeError(
+                "Cannot infer the legacy manifest root; convert paths to project-relative paths "
+                "and specify schema_version: 1 and name explicitly"
+            )
+        root = roots[0] if roots else "."
+        name = upgraded.get("name") or (PurePosixPath(root).name if root != "." else default_name)
+        if root != ".":
+            for item in repositories:
+                for field in ("path", "parent"):
+                    value = item.get(field)
+                    if not value:
+                        continue
+                    if value == root:
+                        item[field] = "."
+                    elif value.startswith(root + "/"):
+                        item[field] = value[len(root) + 1:]
+                    else:
+                        raise RuntimeError(f"Legacy {field} is outside project root {root}: {value}")
+        upgraded = {"schema_version": ManifestSchemaVersion, "name": name,
+                    **{key: value for key, value in upgraded.items() if key not in ("schema_version", "name")}}
+    name = upgraded.get("name")
+    if (not isinstance(name, str) or not name or name in (".", "..")
+            or any(char in name for char in '<>:"/\\|?*') or name != name.rstrip(" .")):
+        raise RuntimeError(f"Manifest name must be a single project directory name: {name!r}")
+    
+    if version == 0:
+        # Reject migrations that would silently redirect templated URLs or commands.
+        for old, new in zip(original.get("repositories", []), repositories):
+            for field in ("remote", "branch", "commit", "post"):
+                before = replace_variables(old.get(field), original, old, "<legacy workspace>")
+                after = replace_variables(new.get(field), upgraded, new, "<project workspace>")
+                if before != after:
+                    raise RuntimeError(f"Review path-dependent variables before upgrading {old['path']}.{field}")
+    return upgraded
 
 
 def bool_config(repo, section, option, default=False):
@@ -157,7 +241,9 @@ def replace_variables(value, manifest, repository, workspace):
         return value
 
     replacements = {
-        "{RepositoryName}": os.path.basename(repository["path"]),
+        "{RepositoryName}": (manifest.get("name") if repository["path"] == "."
+                             and manifest.get("schema_version") == ManifestSchemaVersion
+                             else os.path.basename(repository["path"])),
         "{RepositoryPath}": repository["path"],
         "{Workspace}": workspace,
     }
@@ -182,16 +268,6 @@ def selected_remote_name(repo, preferred_remotes=None):
     if not preferred_remotes and "origin" in remote_names:
         return "origin"
     return remote_names[0] if remote_names else None
-
-
-def repository_relative_path(repo, directory, workspace, root_is_repo, root_name):
-    if repo.bare:
-        path = os.path.relpath(directory, workspace).replace("\\", "/")
-    else:
-        path = os.path.relpath(repo.working_dir, workspace).replace("\\", "/")
-    if root_is_repo:
-        path = root_name if path == "." else f"{root_name}/{path}"
-    return path
 
 
 def scan_bare_repository_dirs(workspace):
@@ -229,12 +305,6 @@ def scan_workspace(workspace, preferred_remotes=None, manifest=None):
     }
     repositories = []
     workspace = os.path.normpath(os.path.abspath(workspace))
-    root_is_repo = (
-        gwalk.RepoWalk.isRepoRoot(workspace)
-        or is_bare_repository_path(workspace)
-        or is_archive_directory(workspace)
-    )
-    root_name = os.path.basename(workspace)
     normal_paths = []
     directories = []
     seen_directories = set()
@@ -260,7 +330,7 @@ def scan_workspace(workspace, preferred_remotes=None, manifest=None):
             repo = git.Repo(archive_git_dir(directory))
         else:
             repo = git.Repo(directory)
-        path = repository_relative_path(repo, directory, workspace, root_is_repo, root_name)
+        path = os.path.relpath(directory if repo.bare else repo.working_dir, workspace).replace("\\", "/")
         cprint(f"Scan {path}", "white")
 
         remotes = {}
@@ -281,7 +351,7 @@ def scan_workspace(workspace, preferred_remotes=None, manifest=None):
         if mode == "submodule":
             parent = ""
             for candidate in reversed(normal_paths):
-                if path.startswith(candidate + "/"):
+                if candidate == "." or path.startswith(candidate + "/"):
                     parent = candidate
                     break
             item["parent"] = parent
@@ -360,14 +430,36 @@ def merge_repositories(old_repositories, scanned_repositories):
 
 
 def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_only=False, sync_remotes=False):
-    old_manifest = load_manifest(manifest_file, missing=True)
+    workspace = os.path.normpath(os.path.abspath(workspace))
+    if listed_only and not os.path.isfile(manifest_file):
+        cprint(f"Manifest file not found for --listed: {manifest_file}", "red", file=sys.stderr)
+        return 1
+    try:
+        source_manifest = load_manifest(manifest_file, missing=True)
+        if listed_only and not source_manifest["repositories"]:
+            raise RuntimeError("No repositories listed in manifest")
+        old_manifest = upgrade_manifest(source_manifest, os.path.basename(workspace))
+    except RuntimeError as error:
+        cprint(str(error), "red", file=sys.stderr)
+        return 1
     scanned_repositories = scan_workspace(workspace, preferred_remotes, old_manifest)
+    unmatched = set()
     if listed_only:
         listed = {
             item.get("path")
             for item in old_manifest.get("repositories", [])
             if isinstance(item, dict) and item.get("path")
         }
+        scanned_paths = {item["path"] for item in scanned_repositories}
+        unmatched = listed - scanned_paths
+        if not listed.intersection(scanned_paths):
+            cprint("No listed repositories matched the project", "red", file=sys.stderr)
+            cprint(f"  Manifest paths: {', '.join(sorted(listed)[:3])}", "yellow", file=sys.stderr)
+            cprint(f"  Scanned paths: {', '.join(sorted(scanned_paths)[:3]) or '<none>'}", "yellow", file=sys.stderr)
+            return 1
+        for path in sorted(unmatched):
+            cprint(f"Warning: listed repository not found: {path}", "yellow", file=sys.stderr)
+        cprint(f"Matched {len(listed) - len(unmatched)} of {len(listed)} listed repositories", "white")
         scanned_repositories = [
             item for item in scanned_repositories
             if item.get("path") in listed
@@ -422,14 +514,12 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
                 continue
         scanned["remote"] = local_remote
 
-    new_manifest = {
-        "variables": old_manifest.get("variables", []),
-        "repositories": merge_repositories(old_manifest.get("repositories", []), scanned_repositories),
-    }
+    new_manifest = dict(old_manifest)
+    new_manifest["repositories"] = merge_repositories(old_manifest.get("repositories", []), scanned_repositories)
 
     old = []
     if os.path.exists(manifest_file):
-        old = render_manifest(old_manifest).splitlines()
+        old = render_manifest(source_manifest).splitlines()
     new = render_manifest(new_manifest).splitlines()
 
     diff = list(difflib.unified_diff(
@@ -441,6 +531,9 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     ))
 
     if not diff:
+        if unmatched:
+            cprint(f"Manifest has no changes, but {len(unmatched)} listed repositories were not found", "yellow")
+            return 1
         cprint(f"Manifest is up to date: {manifest_file}", "green")
         return 0
 
@@ -456,13 +549,34 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
             cprint(line)
 
     cprint(f"\nUpdate {manifest_file} with these changes? [y/N]", end=" ")
-    if input().strip().lower() != "y":
+    try:
+        answer = input().strip().lower()
+    except EOFError:
+        answer = ""
+    if answer != "y":
         cprint("Error: User Cancelled", "red", file=sys.stderr)
         return 1
 
-    with open(manifest_file, "w", encoding="utf-8", newline="\n") as f:
-        f.write(render_manifest(new_manifest))
-    return 0
+    temporary = None
+    try:
+        backup = None
+        if os.path.exists(manifest_file) and source_manifest.get("schema_version", 0) == 0:
+            backup = manifest_file + ".backup." + datetime.now().strftime("%Y%m%d%H%M%S%f")
+            shutil.copy2(manifest_file, backup)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                         dir=os.path.dirname(os.path.abspath(manifest_file)), delete=False) as f:
+            temporary = f.name
+            f.write(render_manifest(new_manifest))
+        os.replace(temporary, manifest_file)
+        if backup:
+            cprint(f"Manifest upgraded to schema {ManifestSchemaVersion}; original saved: {backup}", "green")
+    except OSError as error:
+        cprint(f"Cannot write manifest: {error}", "red", file=sys.stderr)
+        return 1
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.remove(temporary)
+    return 1 if unmatched else 0
 
 
 def checkout_branch(repo, branch, remote_name):
@@ -575,16 +689,6 @@ def clone_repository(remotes, target, remote_name):
 
 def is_empty_directory(path):
     return os.path.isdir(path) and not os.listdir(path)
-
-
-def repository_target(workspace, path, here=False):
-    if not here:
-        return os.path.normpath(os.path.join(workspace, path))
-
-    parts = path.replace("\\", "/").split("/")
-    if len(parts) <= 1:
-        return workspace
-    return os.path.normpath(os.path.join(workspace, *parts[1:]))
 
 
 def select_remotes(remote_value, preferred_remotes=None):
@@ -764,7 +868,14 @@ def deploy_manifest(
     checkout_archive=False,
     sync_remotes=False,
 ):
-    manifest = load_manifest(manifest_file)
+    try:
+        manifest = upgrade_manifest(load_manifest(manifest_file), os.path.basename(os.path.dirname(os.path.abspath(manifest_file))))
+    except RuntimeError as error:
+        cprint(str(error), "red", file=sys.stderr)
+        return 1
+    workspace = os.path.normpath(os.path.abspath(workspace))
+    if not here:
+        workspace = os.path.join(workspace, manifest["name"])
     summary = {
         "cloned": 0,
         "updated": 0,
@@ -773,7 +884,7 @@ def deploy_manifest(
         "failed": 0,
     }
 
-    for repository in manifest["repositories"]:
+    for repository in sorted(manifest["repositories"], key=lambda item: len(PurePosixPath(item["path"]).parts)):
         if not isinstance(repository, dict) or "path" not in repository:
             cprint(f"Invalid repository item: {repository}", "red", file=sys.stderr)
             summary["failed"] += 1
@@ -786,7 +897,7 @@ def deploy_manifest(
             summary["skipped"] += 1
             continue
 
-        target = repository_target(workspace, path, here)
+        target = os.path.normpath(os.path.join(workspace, *path.split("/")))
         display_path = os.path.relpath(target, workspace).replace("\\", "/")
         remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
         branch = replace_variables(repository.get("branch"), manifest, repository, workspace)
@@ -928,7 +1039,7 @@ def main():
         "-H",
         "--here",
         action="store_true",
-        help="deploy the manifest root repository into the workspace itself",
+        help="deploy directly into the workspace instead of creating the manifest's named project directory",
     )
     parser.add_argument(
         "--commit",
@@ -969,6 +1080,9 @@ def main():
     except KeyboardInterrupt:
         cprint("\nInterrupted", "red", file=sys.stderr)
         return 130
+    except RuntimeError as error:
+        cprint(str(error), "red", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
