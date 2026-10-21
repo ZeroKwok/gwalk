@@ -674,8 +674,6 @@ def checkout_commit(repo, commit, branch, remote_name, restore_archive=False):
         reason = f"manifest commit is not contained in {remote_branch}"
     elif local and not repo.is_ancestor(local.commit, remote_ref):
         reason = f"local branch {branch} has commits outside {remote_branch}; preserving its tip"
-    elif local and local.tracking_branch() and local.tracking_branch().path != remote_ref:
-        reason = f"local branch {branch} tracks {local.tracking_branch().name}, not {remote_branch}"
 
     if reason:
         cprint(f"Warning: detached checkout: {reason}", "yellow", file=sys.stderr)
@@ -688,8 +686,15 @@ def checkout_commit(repo, commit, branch, remote_name, restore_archive=False):
         repo.git.switch(branch)
     else:
         repo.git.switch("-C", branch, commit)
-    if not repo.heads[branch].tracking_branch():
+    upstream = repo.heads[branch].tracking_branch()
+    if not upstream:
         repo.git.branch(f"--set-upstream-to={remote_branch}", branch)
+    elif upstream.path != remote_ref:
+        cprint(
+            f"Warning: branch {branch} still tracks {upstream.name}, not {remote_branch}; "
+            "upstream preserved. Plain git pull/push may use this upstream.",
+            "yellow", file=sys.stderr,
+        )
     detail = f" (previous tip {previous[:12]})" if previous and previous != commit else ""
     cprint(f"Checkout {branch} at {commit[:12]}{detail}", "green")
 

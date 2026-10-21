@@ -71,16 +71,41 @@ def test_snapshot_detaches_with_explicit_reason(snapshot, branch, remote, reason
     assert reason in capsys.readouterr().err
 
 
-def test_snapshot_preserves_different_upstream(snapshot, capsys):
+@pytest.mark.parametrize("different_remote", [False, True])
+def test_snapshot_attaches_and_warns_for_different_upstream(snapshot, capsys, different_remote):
     source, repo, first = snapshot
-    repo.create_remote("github", source.working_dir)
-    repo.git.fetch("github")
-    previous = repo.heads.main.commit.hexsha
-    gdeploy.checkout_commit(repo, first, "main", "github")
-    assert repo.head.is_detached
-    assert repo.heads.main.commit.hexsha == previous
+    if different_remote:
+        repo.create_remote("github", source.working_dir)
+        repo.git.fetch("github")
+        remote, upstream = "github", "origin/main"
+    else:
+        source.create_head("fix4.2")
+        repo.git.fetch("origin")
+        repo.git.branch("--set-upstream-to=origin/fix4.2", "main")
+        remote, upstream = "origin", "origin/fix4.2"
+
+    gdeploy.checkout_commit(repo, first, "main", remote)
+
+    assert repo.active_branch.name == "main"
+    assert repo.heads.main.commit.hexsha == first
+    assert repo.heads.main.tracking_branch().name == upstream
+    warning = capsys.readouterr().err
+    assert f"still tracks {upstream}, not {remote}/main" in warning
+    assert "upstream preserved" in warning
+    assert "Plain git pull/push" in warning
+    assert "detached checkout" not in warning
+
+
+def test_snapshot_sets_missing_upstream_without_warning(snapshot, capsys):
+    _, repo, first = snapshot
+    repo.git.branch("--unset-upstream", "main")
+
+    gdeploy.checkout_commit(repo, first, "main", "origin")
+
+    assert repo.active_branch.name == "main"
+    assert repo.head.commit.hexsha == first
     assert repo.heads.main.tracking_branch().name == "origin/main"
-    assert "tracks origin/main, not github/main" in capsys.readouterr().err
+    assert "Warning:" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("divergent", [False, True])
