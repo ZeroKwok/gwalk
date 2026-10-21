@@ -2,10 +2,11 @@
 
 ## Summary
 
-`gdeploy` manages a Git workspace from a manifest file. It has two modes:
+`gdeploy` manages a Git workspace from a manifest file. It has three modes:
 
 - Deploy mode: read the manifest and clone or update repositories in the workspace.
 - Scan mode: walk the current workspace, merge discovered repositories into the manifest, show a diff, and write only after confirmation.
+- Upgrade mode: upgrade only the manifest schema, show a diff, and write after confirmation, without scanning repositories or deploying.
 
 Default manifest path is:
 
@@ -21,6 +22,7 @@ CLI:
 gdeploy [-d WORKSPACE] [MANIFEST]
 gdeploy --scan [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --listed [-d WORKSPACE] [MANIFEST]
+gdeploy --upgrade [-d DIRECTORY] [MANIFEST]
 gdeploy --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --remote NAME [--remote NAME ...] [-d WORKSPACE] [MANIFEST]
 gdeploy --scan --sync-remotes [-d WORKSPACE] [MANIFEST]
@@ -96,13 +98,15 @@ Supported variables:
 
 `upgrade_manifest(manifest, default_name=None)` returns a validated schema-1 copy in memory. It never writes a file or mutates its argument. Deploy and scan call it before processing repositories. Unsupported, non-integer, or future schema versions fail before any Git operations. No version field (or explicit `0`) means the unversioned Python-literal manifest; old `.conf` formats are not supported.
 
-For an unversioned manifest with a unique root repository entry, upgrade derives `name` from that entry's basename, converts its `path` to `.`, and removes that full root prefix from descendant `path` and submodule `parent` values. An existing explicit `name` is preserved. For an already-relative root `.` or an empty manifest, the fallback name is the scan directory name, or the manifest's parent directory name during deployment. Other fields, including variables, `post`, mode, and extra metadata, are preserved.
+For an unversioned manifest with a unique root repository entry, upgrade derives `name` from that entry's basename, converts its `path` to `.`, and removes that full root prefix from descendant `path` and submodule `parent` values. An existing explicit `name` is preserved. For an already-relative root `.` or an empty manifest, the fallback name is the scan directory name, or the manifest's parent directory name during deployment or standalone upgrade. Other fields, including variables, `post`, mode, and extra metadata, are preserved.
 
 If the old root cannot be identified reliably (for example, multiple roots or sibling paths whose root entry is absent), automatic upgrade fails with instructions to specify schema 1, a project name, and project-relative paths explicitly. Upgrade also compares expanded `remote`, `branch`, `commit`, and `post` values under the old and new path rules. A change caused by path-dependent variables such as `{RepositoryPath}` or `{Workspace}` requires manual review and stops automatic upgrade rather than silently changing a URL or command.
 
-Deployment only uses the upgraded data and leaves the source file untouched. Scan compares the original manifest data with the upgraded, scanned result, so schema changes appear in the same diff as repository changes. Canceling any scan write leaves the original file untouched and creates no backup. Only a confirmed scan persists the upgrade.
+Deployment only uses the upgraded data and leaves the source file untouched. Scan compares the original manifest data with the upgraded, scanned result, so schema changes appear in the same diff as repository changes. A confirmed scan or standalone `--upgrade` persists the upgrade; canceling either leaves the original file untouched and creates no backup.
 
-When a confirmed scan upgrades an existing unversioned file, it first saves the original bytes as `<manifest>.backup.<timestamp>`, then writes a same-directory temporary file and atomically replaces the manifest. The original comments are preserved in the backup; serialization does not retain comments in the new file. Backup or write failure stops the operation without replacing the original. Current-schema scans do not create upgrade backups, and an unchanged current-schema manifest is not rewritten.
+`gdeploy --upgrade [MANIFEST]` performs only format conversion. It does not inspect Git state, fetch remotes, run commands, or refresh branches, commits, and descriptions. It can operate even when the repositories are not present. The file must exist; `-d` selects the directory for the default `gdeploy.manifest` when no explicit file is given. It cannot be combined with `--scan`, `--listed`, `--remote`, `--here`, `--commit`, `--sync-remotes`, or `--checkout`. An already-current manifest returns successfully without a prompt or rewrite.
+
+When a confirmed scan or standalone upgrade converts an existing unversioned file, it first saves the original bytes as `<manifest>.backup.<timestamp>`, then writes a same-directory temporary file and atomically replaces the manifest. The original comments are preserved in the backup; serialization does not retain comments in the new file. Backup or write failure stops the operation without replacing the original. Current-schema scans do not create upgrade backups, and an unchanged current-schema manifest is not rewritten.
 
 ## Scan Rules
 

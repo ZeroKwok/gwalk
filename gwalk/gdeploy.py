@@ -517,6 +517,28 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     new_manifest = dict(old_manifest)
     new_manifest["repositories"] = merge_repositories(old_manifest.get("repositories", []), scanned_repositories)
 
+    if unmatched and source_manifest == new_manifest:
+        cprint(f"Manifest has no changes, but {len(unmatched)} listed repositories were not found", "yellow")
+        return 1
+    result = confirm_manifest_update(manifest_file, source_manifest, new_manifest)
+    return 1 if unmatched else result
+
+
+def upgrade_manifest_file(manifest_file):
+    if not os.path.isfile(manifest_file):
+        cprint(f"Manifest file not found: {manifest_file}", "red", file=sys.stderr)
+        return 1
+    try:
+        source_manifest = load_manifest(manifest_file)
+        default_name = os.path.basename(os.path.dirname(os.path.abspath(manifest_file)))
+        upgraded = upgrade_manifest(source_manifest, default_name)
+    except RuntimeError as error:
+        cprint(str(error), "red", file=sys.stderr)
+        return 1
+    return confirm_manifest_update(manifest_file, source_manifest, upgraded)
+
+
+def confirm_manifest_update(manifest_file, source_manifest, new_manifest):
     old = []
     if os.path.exists(manifest_file):
         old = render_manifest(source_manifest).splitlines()
@@ -531,9 +553,6 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     ))
 
     if not diff:
-        if unmatched:
-            cprint(f"Manifest has no changes, but {len(unmatched)} listed repositories were not found", "yellow")
-            return 1
         cprint(f"Manifest is up to date: {manifest_file}", "green")
         return 0
 
@@ -576,7 +595,7 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     finally:
         if temporary and os.path.exists(temporary):
             os.remove(temporary)
-    return 1 if unmatched else 0
+    return 0
 
 
 def checkout_branch(repo, branch, remote_name):
@@ -1019,10 +1038,16 @@ def main():
     )
     parser.add_argument("manifest", nargs="?", help="manifest file")
     parser.add_argument("-d", "--directory", help="workspace directory")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--scan",
         action="store_true",
         help="scan workspace and update manifest after confirmation",
+    )
+    mode.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="upgrade only the manifest schema after confirmation, without scanning or deploying",
     )
     parser.add_argument(
         "--listed",
@@ -1059,6 +1084,8 @@ def main():
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+    if args.upgrade and (args.listed or args.remote or args.here or args.commit or args.sync_remotes or args.checkout):
+        parser.error("--upgrade cannot be combined with scan or deploy options")
 
     if args.debug:
         input("Wait for debugging and press Enter to continue...")
@@ -1068,6 +1095,8 @@ def main():
     manifest = os.path.normpath(os.path.abspath(manifest))
 
     try:
+        if args.upgrade:
+            return upgrade_manifest_file(manifest)
         if args.scan:
             return update_manifest(workspace, manifest, args.remote, args.listed, args.sync_remotes)
         if not os.path.exists(manifest):

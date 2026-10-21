@@ -1,4 +1,5 @@
 import copy
+import sys
 import git
 import pytest
 
@@ -286,15 +287,101 @@ def test_upgrade_backup_failure_does_not_replace_manifest(tmp_path, monkeypatch)
     assert not list(tmp_path.glob("*.backup.*"))
 
 
-@pytest.mark.parametrize("operation", ["scan", "deploy"])
+@pytest.mark.parametrize("operation", ["scan", "deploy", "upgrade"])
 def test_future_schema_fails_before_repository_operations(tmp_path, monkeypatch, operation):
     manifest_file = tmp_path / "gdeploy.manifest"
     original = gdeploy.render_manifest({"schema_version": 2, "name": "Project", "repositories": []})
     manifest_file.write_text(original, encoding="utf-8")
     monkeypatch.setattr(gdeploy, "scan_workspace", lambda *args: pytest.fail("unexpected scan"))
     monkeypatch.setattr(gdeploy, "clone_repository", lambda *args: pytest.fail("unexpected clone"))
-    function = gdeploy.update_manifest if operation == "scan" else gdeploy.deploy_manifest
-
-    assert function(str(tmp_path), str(manifest_file)) == 1
+    if operation == "upgrade":
+        result = gdeploy.upgrade_manifest_file(str(manifest_file))
+    else:
+        function = gdeploy.update_manifest if operation == "scan" else gdeploy.deploy_manifest
+        result = function(str(tmp_path), str(manifest_file))
+    assert result == 1
     assert manifest_file.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob("*.backup.*"))
+
+
+def test_upgrade_only_cli_preserves_repository_state_without_scanning(tmp_path, monkeypatch):
+    manifest_file = tmp_path / "gdeploy.manifest"
+    legacy = {"variables": [], "repositories": [
+        {"path": "FoneTool", "branch": "release", "commit": None, "describe": "saved-dirty",
+         "remote": {"origin": "https://example.invalid/missing.git"}, "post": "build"},
+        {"path": "FoneTool/bin", "branch": "dev", "commit": "saved", "describe": "saved"},
+    ]}
+    original = "# original comment\n" + gdeploy.render_manifest(legacy)
+    manifest_file.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["gdeploy", "--upgrade", str(manifest_file)])
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    monkeypatch.setattr(gdeploy, "scan_workspace", lambda *args: pytest.fail("unexpected scan"))
+    monkeypatch.setattr(gdeploy, "deploy_manifest", lambda *args: pytest.fail("unexpected deploy"))
+
+    assert gdeploy.main() == 0
+    updated = gdeploy.load_manifest(str(manifest_file))
+    assert updated["schema_version"] == 1
+    assert updated["name"] == "FoneTool"
+    assert updated["repositories"] == [
+        {**legacy["repositories"][0], "path": "."},
+        {**legacy["repositories"][1], "path": "bin"},
+    ]
+    backups = list(tmp_path.glob("*.backup.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("answer", ["n", None])
+def test_upgrade_only_cancel_does_not_write(tmp_path, monkeypatch, answer):
+    manifest_file = tmp_path / "gdeploy.manifest"
+    original = gdeploy.render_manifest({"repositories": [{"path": "Project"}]})
+    manifest_file.write_text(original, encoding="utf-8")
+
+    def respond():
+        if answer is None:
+            raise EOFError
+        return answer
+
+    monkeypatch.setattr("builtins.input", respond)
+    assert gdeploy.upgrade_manifest_file(str(manifest_file)) == 1
+    assert manifest_file.read_text(encoding="utf-8") == original
+    assert not list(tmp_path.glob("*.backup.*"))
+
+
+def test_upgrade_only_current_schema_is_not_rewritten(tmp_path, monkeypatch, capsys):
+    manifest_file = tmp_path / "gdeploy.manifest"
+    original = "# keep formatting\n{'schema_version':1, 'name':'Project', 'repositories':[]}\n"
+    manifest_file.write_text(original, encoding="utf-8")
+    modified = manifest_file.stat().st_mtime_ns
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("unexpected prompt"))
+
+    assert gdeploy.upgrade_manifest_file(str(manifest_file)) == 0
+    assert manifest_file.read_text(encoding="utf-8") == original
+    assert manifest_file.stat().st_mtime_ns == modified
+    assert not list(tmp_path.glob("*.backup.*"))
+    assert "Manifest is up to date" in capsys.readouterr().out
+
+
+def test_upgrade_only_uses_directory_for_default_manifest(tmp_path, monkeypatch):
+    manifest_file = tmp_path / "gdeploy.manifest"
+    manifest_file.write_text(gdeploy.render_manifest({"repositories": [{"path": "."}]}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["gdeploy", "--upgrade", "-d", str(tmp_path)])
+    monkeypatch.setattr("builtins.input", lambda: "y")
+
+    assert gdeploy.main() == 0
+    assert gdeploy.load_manifest(str(manifest_file))["name"] == tmp_path.name
+
+
+def test_upgrade_only_missing_manifest_is_not_created(tmp_path, capsys):
+    manifest_file = tmp_path / "missing.manifest"
+    assert gdeploy.upgrade_manifest_file(str(manifest_file)) == 1
+    assert not manifest_file.exists()
+    assert "Manifest file not found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("options", [["--scan"], ["--listed"], ["--commit"], ["--remote", "origin"]])
+def test_upgrade_only_rejects_other_mode_options(monkeypatch, options):
+    monkeypatch.setattr(sys, "argv", ["gdeploy", "--upgrade", *options])
+    with pytest.raises(SystemExit) as error:
+        gdeploy.main()
+    assert error.value.code == 2
