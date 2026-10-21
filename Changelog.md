@@ -1,5 +1,7 @@
 # Changelog
 
+## v0.4.0
+
 ## v0.3.5
 
 优化 `gdeploy --commit`：fetch 后验证清单提交可用，再以 `git switch --detach <commit>` 检出快照，不移动本地分支；工作树有未提交修改时停止检出。
