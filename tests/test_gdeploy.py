@@ -173,6 +173,72 @@ def test_scan_workspace_warns_for_dirty_repository(tmp_path, capsys):
     assert "Warning: dirty repository: demo" in output.out
 
 
+@pytest.mark.parametrize("old_dirty,new_dirty", [(False, False), (True, True), (False, True), (True, False)])
+def test_scan_preserves_description_only_for_tag_selection_change(tmp_path, capsys, old_dirty, new_dirty):
+    repo = make_repo(tmp_path)
+    repo.create_tag("old-release")
+    old_description = "old-release" + ("-dirty" if old_dirty else "")
+    repo.create_tag("new-release", message="annotated tag takes precedence")
+    if new_dirty:
+        (tmp_path / "README.md").write_text("modified\n", encoding="utf-8")
+    actual = repo.git.describe("--tags", "--dirty", "--always")
+    assert actual == "new-release" + ("-dirty" if new_dirty else "")
+    manifest = {"repositories": [{"path": ".", "commit": repo.head.commit.hexsha, "describe": old_description}]}
+
+    scanned = gdeploy.scan_workspace(str(tmp_path), manifest=manifest)
+
+    assert scanned[0]["describe"] == (old_description if old_dirty == new_dirty else actual)
+    assert ("Warning: dirty repository" in capsys.readouterr().out) == new_dirty
+
+
+@pytest.mark.parametrize("case", ["changed_commit", "empty_old", "missing_old", "unresolvable_old", "failed_describe", "hash_old", "dirty_tag"])
+def test_scan_does_not_preserve_description_for_other_changes(tmp_path, monkeypatch, case):
+    repo = make_repo(tmp_path)
+    commit = repo.head.commit.hexsha
+    repo.create_tag("old-release-dirty" if case == "dirty_tag" else "old-release")
+    old_description = "old-release-dirty" if case == "dirty_tag" else "old-release"
+    repo.create_tag("new-release", message="annotated tag takes precedence")
+    previous = {"path": ".", "commit": commit, "describe": old_description}
+    if case == "changed_commit":
+        repo.index.commit("next")
+    elif case == "empty_old":
+        previous["describe"] = ""
+    elif case == "missing_old":
+        del previous["describe"]
+    elif case == "unresolvable_old":
+        previous["describe"] = "unknown-release"
+    elif case == "failed_describe":
+        monkeypatch.setattr(gdeploy, "describe_repository", lambda repo: "")
+    elif case == "hash_old":
+        previous["describe"] = commit[:7]
+    elif case == "dirty_tag":
+        (tmp_path / "README.md").write_text("modified\n", encoding="utf-8")
+    expected = gdeploy.describe_repository(repo)
+
+    scanned = gdeploy.scan_workspace(str(tmp_path), manifest={"repositories": [previous]})
+
+    assert scanned[0]["describe"] == expected
+    assert scanned[0]["commit"] == repo.head.commit.hexsha
+
+
+def test_update_manifest_ignores_tag_only_description_change(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    repo.create_tag("old-release")
+    manifest = {"schema_version": 1, "name": "demo", "variables": [],
+                "repositories": gdeploy.scan_workspace(str(tmp_path))}
+    manifest_file = tmp_path / "gdeploy.manifest"
+    original = gdeploy.render_manifest(manifest)
+    manifest_file.write_text(original, encoding="utf-8")
+    # Keep the manifest itself out of the dirty state being described.
+    (tmp_path / ".git" / "info" / "exclude").write_text("gdeploy.manifest\n", encoding="utf-8")
+    repo.create_tag("new-release", message="annotated tag takes precedence")
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("tag-only changes must not prompt"))
+
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    assert manifest_file.read_text(encoding="utf-8") == original
+    assert "--- " not in capsys.readouterr().out
+
+
 def test_scan_detached_head_keeps_manifest_branch_when_commit_is_branch_tip(tmp_path, monkeypatch, capsys):
     repo_path = tmp_path / "demo"
     repo_path.mkdir()

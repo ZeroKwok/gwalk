@@ -363,6 +363,30 @@ def scan_workspace(workspace, preferred_remotes=None, manifest=None):
         if item["describe"].endswith("-dirty"):
             cprint(f"Warning: dirty repository: {path} ({item['describe']})", "yellow")
 
+        previous = known_repositories.get(path)
+        old_description = previous.get("describe") if previous else None
+        if (previous and previous.get("commit") == item["commit"]
+                and old_description and item["describe"] and old_description != item["describe"]):
+            try:
+                clean_description = repo.git.describe("--tags", "--always")
+                dirty = item["describe"] != clean_description
+                # Resolve the full name first: a real tag can itself end in '-dirty'.
+                old_dirty = False
+                try:
+                    old_commit = repo.git.rev_parse("--verify", f"{old_description}^{{commit}}")
+                except git.exc.GitCommandError:
+                    if not old_description.endswith("-dirty"):
+                        raise
+                    old_dirty = True
+                    old_commit = repo.git.rev_parse("--verify", f"{old_description[:-6]}^{{commit}}")
+                old_label = old_description[:-6] if old_dirty else old_description
+                if (old_commit == item["commit"] and old_dirty == dirty
+                        and not item["commit"].startswith(old_label)
+                        and not item["commit"].startswith(clean_description)):
+                    item["describe"] = old_description
+            except git.exc.GitCommandError:
+                pass
+
         matched_remote = next((name for name in preferred_remotes if name in remotes), None)
         if matched_remote:
             item["remote"] = {matched_remote: remotes[matched_remote]}

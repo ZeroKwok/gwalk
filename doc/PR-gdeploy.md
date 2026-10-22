@@ -121,6 +121,8 @@ For each repository, scan records:
 - `commit`: current `HEAD` commit ID.
 - `describe`: output of `git describe --tags --dirty --always`; empty string if Git cannot describe the repository.
 
+When the commit is unchanged and a nonempty old description differs only in tag selection, scan preserves that description. It verifies that the old description still resolves to the same commit and that clean/dirty state is unchanged. Commit or clean/dirty state changes, missing descriptions, hash-only descriptions, and failed description queries keep the normal refresh behavior. Dirty warnings always use the current scan result.
+
 The root repository is always recorded as `.`, independent of the physical project directory name. Scan uses the directory itself as the project root; `--scan --here` is equivalent to ordinary scan.
 
 Example:
