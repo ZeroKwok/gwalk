@@ -544,7 +544,7 @@ def update_manifest(workspace, manifest_file, preferred_remotes=None, listed_onl
     if unmatched and source_manifest == new_manifest:
         cprint(f"Manifest has no changes, but {len(unmatched)} listed repositories were not found", "yellow")
         return 1
-    result = confirm_manifest_update(manifest_file, source_manifest, new_manifest)
+    result = confirm_manifest_update(manifest_file, source_manifest, new_manifest, stamp_scan=True)
     return 1 if unmatched else result
 
 
@@ -562,23 +562,27 @@ def upgrade_manifest_file(manifest_file):
     return confirm_manifest_update(manifest_file, source_manifest, upgraded)
 
 
-def confirm_manifest_update(manifest_file, source_manifest, new_manifest):
+def confirm_manifest_update(manifest_file, source_manifest, new_manifest, *, stamp_scan=False):
     old = []
     if os.path.exists(manifest_file):
         old = render_manifest(source_manifest).splitlines()
     new = render_manifest(new_manifest).splitlines()
+    if old == new and (not stamp_scan or "timestamp" in new_manifest):
+        cprint(f"Manifest is up to date: {manifest_file}", "green")
+        return 0
 
-    diff = list(difflib.unified_diff(
+    if stamp_scan:
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        new_manifest = {**new_manifest, "timestamp": timestamp}
+        new = render_manifest(new_manifest).splitlines()
+
+    diff = difflib.unified_diff(
         old,
         new,
         fromfile=manifest_file + " (old)",
         tofile=manifest_file + " (new)",
         lineterm="",
-    ))
-
-    if not diff:
-        cprint(f"Manifest is up to date: {manifest_file}", "green")
-        return 0
+    )
 
     print("")
     for line in diff:

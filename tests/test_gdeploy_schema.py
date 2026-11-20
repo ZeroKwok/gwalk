@@ -306,7 +306,8 @@ def test_future_schema_fails_before_repository_operations(tmp_path, monkeypatch,
 
 def test_upgrade_only_cli_preserves_repository_state_without_scanning(tmp_path, monkeypatch):
     manifest_file = tmp_path / "gdeploy.manifest"
-    legacy = {"variables": [], "repositories": [
+    timestamp = "2026-11-16T13:47:55+08:00"
+    legacy = {"timestamp": timestamp, "variables": [], "repositories": [
         {"path": "FoneTool", "branch": "release", "commit": None, "describe": "saved-dirty",
          "remote": {"origin": "https://example.invalid/missing.git"}, "post": "build"},
         {"path": "FoneTool/bin", "branch": "dev", "commit": "saved", "describe": "saved"},
@@ -322,6 +323,7 @@ def test_upgrade_only_cli_preserves_repository_state_without_scanning(tmp_path, 
     updated = gdeploy.load_manifest(str(manifest_file))
     assert updated["schema_version"] == 1
     assert updated["name"] == "FoneTool"
+    assert updated["timestamp"] == timestamp
     assert updated["repositories"] == [
         {**legacy["repositories"][0], "path": "."},
         {**legacy["repositories"][1], "path": "bin"},

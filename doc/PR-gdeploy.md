@@ -46,6 +46,7 @@ Top-level structure:
 {
     'schema_version': 1,
     'name': 'FoneTool',
+    'timestamp': '2026-11-16T13:47:55+08:00',
     'variables': [
         {
             'name': 'Host',
@@ -75,6 +76,8 @@ Top-level structure:
 ```
 
 `schema_version` is an integer independent of the tool version; the current schema is `1`. `name` is the project name and default deployment directory name. It must be a single nonempty directory name, not a path. Scan preserves an existing name; a newly generated manifest uses the scan directory name. A project containing multiple independent repositories uses their relative paths and does not need a `path: '.'` entry.
+
+`timestamp` is optional top-level metadata recording when `--scan` prepared a manifest. It is an ISO 8601 string with second precision and the local UTC offset, such as `2026-11-16T13:47:55+08:00`. The timestamp appears in the proposed diff and is written only after confirmation. A scan adds it if absent, including when repository data is already current; later unchanged scans do not refresh it. Standalone `--upgrade` preserves any existing timestamp; deploy and `--diff` do not use it.
 
 Repository fields:
 

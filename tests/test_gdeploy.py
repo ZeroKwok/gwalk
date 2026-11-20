@@ -1,4 +1,5 @@
 import ast
+from datetime import datetime
 import os
 import shutil
 import subprocess
@@ -224,7 +225,7 @@ def test_scan_does_not_preserve_description_for_other_changes(tmp_path, monkeypa
 def test_update_manifest_ignores_tag_only_description_change(tmp_path, monkeypatch, capsys):
     repo = make_repo(tmp_path)
     repo.create_tag("old-release")
-    manifest = {"schema_version": 1, "name": "demo", "variables": [],
+    manifest = {"schema_version": 1, "name": "demo", "timestamp": "2026-11-16T13:47:55+08:00", "variables": [],
                 "repositories": gdeploy.scan_workspace(str(tmp_path))}
     manifest_file = tmp_path / "gdeploy.manifest"
     original = gdeploy.render_manifest(manifest)
@@ -496,6 +497,50 @@ def test_update_manifest_writes_only_after_confirmation(tmp_path, monkeypatch):
     assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
     manifest = gdeploy.load_manifest(str(manifest_file))
     assert manifest["repositories"][0]["path"] == "demo"
+    timestamp = datetime.fromisoformat(manifest["timestamp"])
+    assert timestamp.utcoffset() is not None
+    assert timestamp.microsecond == 0
+    assert timestamp.isoformat(timespec="seconds") == manifest["timestamp"]
+
+
+def test_scan_refreshes_timestamp_only_on_confirmed_changes(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path / "demo", "main")
+    manifest_file = tmp_path / "gdeploy.manifest"
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    before = manifest_file.read_bytes()
+    expected = "2026-11-16T13:47:55+08:00"
+    capsys.readouterr()
+
+    class ScanClock:
+        @staticmethod
+        def now():
+            return SimpleNamespace(astimezone=lambda: datetime.fromisoformat(expected))
+
+    monkeypatch.setattr(gdeploy, "datetime", ScanClock)
+    initial = gdeploy.load_manifest(str(manifest_file))
+    initial.pop("timestamp")
+    manifest_file.write_text(gdeploy.render_manifest(initial), encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    assert gdeploy.load_manifest(str(manifest_file))["timestamp"] == expected
+    before = manifest_file.read_bytes()
+
+    monkeypatch.setattr("builtins.input", lambda: pytest.fail("unchanged scan should not prompt"))
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    assert manifest_file.read_bytes() == before
+
+    commit = repo.index.commit("new commit").hexsha
+    monkeypatch.setattr("builtins.input", lambda: "n")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 1
+    assert manifest_file.read_bytes() == before
+    assert f"'timestamp': '{expected}'" in capsys.readouterr().out
+
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    assert gdeploy.update_manifest(str(tmp_path), str(manifest_file)) == 0
+    updated = gdeploy.load_manifest(str(manifest_file))
+    assert updated["timestamp"] == expected
+    assert updated["repositories"][0]["commit"] == commit
 
 
 def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch, capsys):
@@ -507,7 +552,7 @@ def test_update_manifest_diff_ignores_existing_formatting(tmp_path, monkeypatch,
     describe = repo.git.describe("--tags", "--dirty", "--always")
     manifest_file = tmp_path / "gdeploy.manifest"
     manifest_file.write_text(
-        "{'schema_version': 1, 'name': 'Project', 'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
+        "{'schema_version': 1, 'name': 'Project', 'timestamp': '2026-11-16T13:47:55+08:00', 'variables': [], 'repositories': [{'path': 'demo', 'remote': {'origin': "
         f"'https://example.com/demo.git'}}, 'branch': 'main', 'commit': '{commit}', "
         f"'describe': '{describe}', 'type': 'repository'}}]}}\n",
         encoding="utf-8",
@@ -658,6 +703,7 @@ def test_scan_preserves_variable_remote_when_resolved_url_matches(tmp_path, monk
     scanned["remote"] = {"origin": ["https://backup.invalid/demo.git", "{Host}/demo.git"]}
     manifest_file.write_text(gdeploy.render_manifest({
         "schema_version": 1, "name": "Project",
+        "timestamp": "2026-11-16T13:47:55+08:00",
         "variables": [{"name": "Host", "value": "https://example.com"}],
         "repositories": [scanned],
     }), encoding="utf-8")
