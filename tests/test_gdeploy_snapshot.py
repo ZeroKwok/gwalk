@@ -320,7 +320,7 @@ def test_skip_local_ahead_is_read_only_even_with_dirty_tree(snapshot, tmp_path, 
     assert "0 updated, 0 post failed, 1 skipped, 0 failed" in output
 
 
-@pytest.mark.parametrize("state", ["match", "behind", "diverged", "different branch", "needs fetch"])
+@pytest.mark.parametrize("state", ["behind", "diverged", "different branch", "needs fetch"])
 def test_skip_local_ahead_keeps_normal_checkout_for_other_relationships(snapshot, tmp_path, monkeypatch, capsys, state):
     source, repo, first = snapshot
     target = source.head.commit.hexsha
@@ -346,6 +346,98 @@ def test_skip_local_ahead_keeps_normal_checkout_for_other_relationships(snapshot
     assert repo.active_branch.name == "main"
     assert repo.head.commit.hexsha == target
     assert events == [target]
+    assert "1 updated, 0 post failed, 0 skipped, 0 failed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("branch,unpushed", [("main", False), (None, False), ("main", True)])
+def test_skip_local_ahead_skips_matching_worktree(snapshot, tmp_path, monkeypatch, capsys, branch, unpushed):
+    source, repo, first = snapshot
+    # Neither being behind the remote tip nor having an unpublished snapshot is a mismatch.
+    if unpushed:
+        first = repo.index.commit("unpublished snapshot").hexsha
+    elif branch:
+        repo.git.switch("-C", branch, first)
+    else:
+        repo.git.switch("--detach", first)
+    manifest = write_snapshot_manifest(tmp_path, source, first, branch=branch)
+    for name in ("ensure_manifest_remote", "fetch_repository", "checkout_commit", "update_submodules", "run_post_commands"):
+        monkeypatch.setattr(gdeploy, name, lambda *args: pytest.fail("matching repository was processed"))
+    monkeypatch.chdir(repo.working_dir)
+    monkeypatch.setattr(sys, "argv", ["gdeploy", "--commit", "--skip-local-ahead", "-H", str(manifest)])
+
+    assert gdeploy.main() == 0
+    assert repo.head.commit.hexsha == first
+    assert repo.head.is_detached == (branch is None)
+    output = capsys.readouterr().out
+    assert "Skip .: already matches manifest" in output
+    assert "0 updated, 0 post failed, 1 skipped, 0 failed" in output
+
+
+@pytest.mark.parametrize("state", ["strict", "wrong branch", "remote URL", "missing remote", "dirty", "operation"])
+def test_matching_head_does_not_skip_if_deployment_is_needed(snapshot, tmp_path, monkeypatch, capsys, state):
+    source, repo, _ = snapshot
+    tip = repo.head.commit.hexsha
+    if state == "wrong branch":
+        repo.git.switch("-c", "feature")
+    elif state == "remote URL":
+        repo.git.remote("set-url", "origin", "https://example.invalid/other.git")
+    elif state == "missing remote":
+        repo.delete_remote("origin")
+    elif state == "dirty":
+        (Path(repo.working_dir) / "file.txt").write_text("untracked", encoding="utf-8")
+    elif state == "operation":
+        (Path(repo.git_dir) / "MERGE_HEAD").write_text(tip + "\n", encoding="utf-8")
+    manifest = write_snapshot_manifest(tmp_path, source, tip)
+    events = []
+    monkeypatch.setattr(gdeploy, "update_submodules", lambda *args: events.append("submodules"))
+    monkeypatch.setattr(gdeploy, "run_post_commands", lambda *args: events.append("post") or True)
+
+    result = gdeploy.deploy_manifest(repo.working_dir, manifest, here=True, checkout_to_commit=True,
+                                     skip_local_ahead=state != "strict", sync_remotes=True)
+    output = capsys.readouterr()
+    assert "already matches manifest" not in output.out
+    assert repo.active_branch.name == "main"
+    assert repo.head.commit.hexsha == tip
+    if state in ("remote URL", "missing remote"):
+        assert repo.git.config("--get", "remote.origin.url").replace("\\", "/") == source.working_dir.replace("\\", "/")
+    if state in ("dirty", "operation"):
+        assert result == 1
+        assert not events
+        assert ("Working tree is dirty" if state == "dirty" else "Git operation in progress") in output.err
+    else:
+        assert result == 0
+        assert events == ["submodules", "post"]
+        assert "1 updated, 0 post failed, 0 skipped, 0 failed" in output.out
+
+
+def test_matching_head_initializes_submodule_before_it_can_skip(snapshot, tmp_path, monkeypatch, capsys):
+    source, _, _ = snapshot
+    module = git.Repo.clone_from(source.working_dir, tmp_path / "module")
+    source.git.execute(["git", "-c", "protocol.file.allow=always", "submodule", "add", module.working_dir, "module"])
+    tip = source.index.commit("add module").hexsha
+    repo = git.Repo.clone_from(source.working_dir, tmp_path / "with-submodule")
+    manifest = write_snapshot_manifest(tmp_path, source, tip)
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.setattr(gdeploy, "run_post_commands", lambda *args: True)
+    assert repo.git.submodule("status", "--recursive").startswith("-")
+
+    for expected in ("1 updated, 0 post failed, 0 skipped, 0 failed", "Skip .: already matches manifest"):
+        assert gdeploy.deploy_manifest(repo.working_dir, manifest, here=True, checkout_to_commit=True,
+                                       skip_local_ahead=True) == 0
+        assert expected in capsys.readouterr().out
+        assert git.Repo(Path(repo.working_dir) / "module").head.commit.hexsha == module.head.commit.hexsha
+
+
+def test_matching_bare_archive_is_restored_when_requested(snapshot, tmp_path, monkeypatch, capsys):
+    source, _, _ = snapshot
+    directory = tmp_path / "archive"
+    garchive.clone(source.working_dir, directory)
+    manifest = write_snapshot_manifest(tmp_path, source, source.head.commit.hexsha, mode="archive")
+    monkeypatch.setattr(gdeploy, "run_post_commands", lambda *args: True)
+
+    assert gdeploy.deploy_manifest(directory, manifest, here=True, checkout_to_commit=True, checkout_archive=True,
+                                   skip_local_ahead=True) == 0
+    assert not git.Repo(directory).bare
     assert "1 updated, 0 post failed, 0 skipped, 0 failed" in capsys.readouterr().out
 
 

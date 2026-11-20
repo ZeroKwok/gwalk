@@ -655,6 +655,13 @@ def commit_available(repo, commit):
         return False
 
 
+def git_operation_in_progress(repo):
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
+        if os.path.exists(os.path.join(repo.git_dir, marker)):
+            return marker
+    return None
+
+
 def checkout_commit(repo, commit, branch, remote_name, restore_archive=False):
     if not commit:
         raise RuntimeError(f"Manifest commit is missing: {repo.working_dir}")
@@ -663,9 +670,9 @@ def checkout_commit(repo, commit, branch, remote_name, restore_archive=False):
         raise RuntimeError(f"Manifest commit not found: {commit}")
     if not repo.bare and repo.is_dirty(untracked_files=True, submodules=True):
         raise RuntimeError(f"Working tree is dirty: {repo.working_dir}")
-    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
-        if os.path.exists(os.path.join(repo.git_dir, marker)):
-            raise RuntimeError(f"Git operation in progress ({marker}): {repo.working_dir}")
+    marker = git_operation_in_progress(repo)
+    if marker:
+        raise RuntimeError(f"Git operation in progress ({marker}): {repo.working_dir}")
     if branch:
         if repo.git.check_ref_format("--branch", branch) != branch:
             raise RuntimeError(f"Invalid manifest branch: {branch}")
@@ -831,6 +838,15 @@ def fetch_url_matches(current_url, allowed_urls):
     return current_url.replace("\\", "/") in {url.replace("\\", "/") for url in allowed_urls}
 
 
+def configured_fetch_urls(repo, name):
+    if not name:
+        return []
+    code, urls, _ = repo.git.config(
+        "--get-all", f"remote.{name}.url", with_extended_output=True, with_exceptions=False,
+    )
+    return urls.splitlines() if code == 0 else []
+
+
 def ensure_manifest_remote(repo, name, urls, sync_remotes=False, display_path=None):
     if not urls:
         return selected_remote_name(repo)
@@ -949,8 +965,31 @@ def clone_mode_repository(mode, remotes, target, remote_name):
     raise last_error
 
 
+def worktree_has_changes(repo):
+    return bool(repo.git.status("--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none"))
+
+
+def snapshot_worktree_ready(repo, branch, remote_name, remotes):
+    """Check whether an existing worktree at the snapshot needs any deployment work."""
+    if repo.bare or git_operation_in_progress(repo):
+        return False
+    if branch and repo.git.symbolic_ref("--quiet", "HEAD", with_exceptions=False) != f"refs/heads/{branch}":
+        return False
+    if remotes:
+        current_urls = configured_fetch_urls(repo, remote_name)
+        if not current_urls or not fetch_url_matches(current_urls[0], remotes):
+            return False
+    try:
+        if worktree_has_changes(repo):
+            return False
+        # An uninitialized submodule does not necessarily show up in git status.
+        return all(line.startswith(" ") for line in repo.git.submodule("status", "--recursive").splitlines())
+    except git.exc.GitCommandError:
+        return False
+
+
 def update_existing_repository(
-    repo, target, remote_name, remotes, sync_remotes, display_path, *, skip_local_ahead, commit,
+    repo, target, remote_name, remotes, sync_remotes, display_path, *, skip_local_ahead, commit, branch,
 ):
     """Fetch an existing repository unless the snapshot policy says to skip it."""
     original_head = snapshot = None
@@ -960,7 +999,11 @@ def update_existing_repository(
             if not original_head:
                 raise RuntimeError("Cannot determine whether local HEAD is ahead: local HEAD has no commit")
             snapshot = resolve_manifest_snapshot(repo, commit)
-            if snapshot and report_local_ahead(repo, snapshot, original_head, display_path):
+            if snapshot == original_head:
+                if snapshot_worktree_ready(repo, branch, remote_name, remotes):
+                    cprint(f"Skip {display_path}: already matches manifest", "green")
+                    return remote_name, True
+            elif snapshot and report_local_ahead(repo, snapshot, original_head, display_path):
                 return remote_name, True
 
     remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
@@ -1060,7 +1103,7 @@ def deploy_manifest(
                     remote_name, skipped = update_existing_repository(
                         repo, target, remote_name, remotes, sync_remotes, display_path,
                         skip_local_ahead=protect_snapshot and mode == "archive" and (checkout_archive or not repo.bare),
-                        commit=commit,
+                        commit=commit, branch=branch,
                     )
                     if skipped:
                         summary["skipped"] += 1
@@ -1109,7 +1152,7 @@ def deploy_manifest(
                 repo = git.Repo(target)
                 remote_name, skipped = update_existing_repository(
                     repo, target, remote_name, remotes, sync_remotes, display_path,
-                    skip_local_ahead=protect_snapshot, commit=commit,
+                    skip_local_ahead=protect_snapshot, commit=commit, branch=branch,
                 )
                 if skipped:
                     summary["skipped"] += 1
@@ -1205,11 +1248,8 @@ def unpushed_commits(repo, head, remote_value, preferred_remotes):
         raise RuntimeError("no manifest remote selected")
     if not all(isinstance(url, str) for url in urls):
         raise RuntimeError(f"invalid manifest URL for {name}")
-    code, current_urls, _ = repo.git.config(
-        "--get-all", f"remote.{name}.url", with_extended_output=True, with_exceptions=False,
-    )
-    current_urls = current_urls.splitlines()
-    if code or not current_urls:
+    current_urls = configured_fetch_urls(repo, name)
+    if not current_urls:
         raise RuntimeError(f"local remote {name} has no fetch URL")
     if not fetch_url_matches(current_urls[0], urls):
         raise RuntimeError(f"local remote {name} URL differs from manifest")
@@ -1268,7 +1308,7 @@ def diff_repository(workspace, manifest, repository, preferred_remotes):
 
         if not repo.bare:
             try:
-                if repo.git.status("--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none"):
+                if worktree_has_changes(repo):
                     details.append("uncommitted changes")
                     result = max(result, 1)
             except git.exc.GitCommandError:
@@ -1362,7 +1402,7 @@ def main():
     parser.add_argument(
         "--skip-local-ahead",
         action="store_true",
-        help="with --commit, skip existing repositories whose HEAD is ahead of the manifest commit",
+        help="with --commit, skip existing repositories that are ahead of the manifest commit or already match",
     )
     parser.add_argument(
         "--sync-remotes",

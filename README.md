@@ -84,7 +84,7 @@ gdeploy --diff
 # 指定项目根目录，并以清单中的 github 远端优先判断未推送提交
 gdeploy --diff -d PROJECT --remote github
 
-# 按清单检出当前工作区，但保留当前 HEAD 已领先的仓库
+# 按清单检出当前工作区，跳过已完全匹配或当前 HEAD 已领先的仓库
 gdeploy --commit --skip-local-ahead -H
 ```
 
