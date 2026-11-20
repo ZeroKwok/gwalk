@@ -827,6 +827,10 @@ def select_remote_entry(remote_value, preferred_remotes=None):
     return name, remotes
 
 
+def fetch_url_matches(current_url, allowed_urls):
+    return current_url.replace("\\", "/") in {url.replace("\\", "/") for url in allowed_urls}
+
+
 def ensure_manifest_remote(repo, name, urls, sync_remotes=False, display_path=None):
     if not urls:
         return selected_remote_name(repo)
@@ -834,10 +838,9 @@ def ensure_manifest_remote(repo, name, urls, sync_remotes=False, display_path=No
     if not name:
         raise RuntimeError(f"Manifest remote has no name: {repo.git_dir}")
 
-    allowed_urls = {url.replace("\\", "/") for url in urls}
     existing = next((remote for remote in repo.remotes if remote.name == name), None)
     current_urls = repo.git.config("--get-all", f"remote.{name}.url").splitlines() if existing else []
-    if current_urls and current_urls[0].replace("\\", "/") in allowed_urls:
+    if current_urls and fetch_url_matches(current_urls[0], urls):
         return name
 
     display_path = display_path or repo.working_tree_dir or repo.git_dir
@@ -855,7 +858,7 @@ def ensure_manifest_remote(repo, name, urls, sync_remotes=False, display_path=No
         for remote in remotes:
             remote_urls = repo.git.config("--get-all", f"remote.{remote.name}.url").splitlines()
             remote_url = remote_urls[0] if remote_urls else "<missing>"
-            same_url = remote_urls and remote_url.replace("\\", "/") in allowed_urls
+            same_url = remote_urls and fetch_url_matches(remote_url, urls)
             prefix = "  Existing: " if len(remotes) == 1 else "    "
             cprint(f"{prefix}{remote.name} -> {remote_url}{' (same fetch URL)' if same_url else ''}", "yellow")
         if not remotes:
@@ -1110,9 +1113,157 @@ def deploy_manifest(
     return 0 if summary["failed"] == 0 and summary["post_failed"] == 0 else 1
 
 
+def resolve_snapshot_commit(repo, revision):
+    try:
+        return repo.git.rev_parse("--verify", "--end-of-options", f"{revision}^{{commit}}")
+    except git.exc.GitCommandError:
+        return None
+
+
+def count_exclusive_commits(repo, left, right):
+    if left == right:
+        return 0, 0
+    if repo.git.rev_parse("--is-shallow-repository") == "true":
+        raise RuntimeError("shallow history cannot reliably compare different commits")
+    counts = repo.git.rev_list("--left-right", "--count", f"{left}...{right}", "--")
+    left_count, right_count = map(int, counts.split())
+    return left_count, right_count
+
+
+def snapshot_difference(repo, commit, head):
+    if not head:
+        raise RuntimeError("local HEAD has no commit")
+    if commit is None or commit == "":
+        raise RuntimeError("manifest commit is missing")
+    if not isinstance(commit, str):
+        raise RuntimeError("manifest commit must be a string")
+    snapshot = resolve_snapshot_commit(repo, commit)
+    if not snapshot:
+        raise RuntimeError(f"manifest commit not found locally: {commit}")
+
+    manifest_only, local_only = count_exclusive_commits(repo, snapshot, head)
+    if manifest_only and local_only:
+        return f"Diverged (manifest only: {manifest_only}, local only: {local_only})", 1
+    if manifest_only or local_only:
+        side, count = ("Manifest", manifest_only) if manifest_only else ("Local", local_only)
+        return f"{side} ahead ({count} {'commit' if count == 1 else 'commits'})", 1
+    return "Match", 0
+
+
+def unpushed_commits(repo, head, remote_value, preferred_remotes):
+    name, urls = select_remote_entry(remote_value, preferred_remotes)
+    if not name or not urls:
+        raise RuntimeError("no manifest remote selected")
+    if not all(isinstance(url, str) for url in urls):
+        raise RuntimeError(f"invalid manifest URL for {name}")
+    code, current_urls, _ = repo.git.config(
+        "--get-all", f"remote.{name}.url", with_extended_output=True, with_exceptions=False,
+    )
+    current_urls = current_urls.splitlines()
+    if code or not current_urls:
+        raise RuntimeError(f"local remote {name} has no fetch URL")
+    if not fetch_url_matches(current_urls[0], urls):
+        raise RuntimeError(f"local remote {name} URL differs from manifest")
+    if is_mirror_repository(repo, name):
+        raise RuntimeError(f"mirror remote {name} has no independent tracking reference")
+
+    if not head:
+        raise RuntimeError("local HEAD has no commit")
+    code, branch_ref, _ = repo.git.symbolic_ref(
+        "--quiet", "HEAD", with_extended_output=True, with_exceptions=False,
+    )
+    if code == 1:
+        raise RuntimeError("detached HEAD")
+    if code or not branch_ref.startswith("refs/heads/"):
+        raise RuntimeError("cannot resolve local branch")
+
+    branch = branch_ref.split("/", 2)[2]
+    tracking = f"{name}/{branch}"
+    try:
+        remote_tip = repo.git.show_ref("--verify", "--hash", "--", f"refs/remotes/{tracking}")
+    except git.exc.GitCommandError:
+        raise RuntimeError(f"no cached tracking reference for {tracking}") from None
+    _, local_only = count_exclusive_commits(repo, remote_tip, head)
+    return local_only, tracking
+
+
+def diff_repository(workspace, manifest, repository, preferred_remotes):
+    path = repository["path"]
+    target = os.path.join(workspace, *path.split("/"))
+    try:
+        repo = git.Repo(target, expand_vars=False)
+    except git.exc.NoSuchPathError:
+        return "Cannot compare (repository not found)", 2
+    except git.exc.InvalidGitRepositoryError:
+        return "Cannot compare (not a Git repository root)", 2
+    if not repo.bare:
+        worktree = os.path.normcase(os.path.realpath(repo.working_tree_dir))
+        if worktree != os.path.normcase(os.path.realpath(target)):
+            return "Cannot compare (not a Git repository root)", 2
+
+    details = []
+    # Avoid refreshing the index on disk and block lazy fetches, including on older Git.
+    with repo.git.custom_environment(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL=""):
+        head = resolve_snapshot_commit(repo, "HEAD")
+        try:
+            commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
+            status, result = snapshot_difference(repo, commit, head)
+        except RuntimeError as error:
+            status, result = f"Cannot compare ({error})", 2
+        except git.exc.GitCommandError:
+            status, result = "Cannot compare (could not read commit history)", 2
+
+        if not repo.bare:
+            try:
+                if repo.git.status("--porcelain=v1", "--untracked-files=normal", "--ignore-submodules=none"):
+                    details.append("uncommitted changes")
+                    result = max(result, 1)
+            except git.exc.GitCommandError:
+                details.append("uncommitted changes unknown (git status failed)")
+                result = 2
+
+        try:
+            remote_value = replace_variables(repository.get("remote"), manifest, repository, workspace)
+            count, tracking = unpushed_commits(repo, head, remote_value, preferred_remotes)
+            if count:
+                details.append(f"unpushed commits: {count} (relative to cached {tracking})")
+                result = max(result, 1)
+        except RuntimeError as error:
+            details.append(f"unpushed status unknown ({error})")
+        except git.exc.GitCommandError:
+            details.append("unpushed status unknown (could not read commit history)")
+
+    return f"{status}: {'; '.join(details)}" if details else status, result
+
+
+def diff_manifest(workspace, manifest_file, preferred_remotes=None):
+    workspace = os.path.normpath(os.path.abspath(workspace))
+    try:
+        manifest = upgrade_manifest(load_manifest(manifest_file), os.path.basename(workspace))
+    except FileNotFoundError:
+        cprint(f"Manifest file not found: {manifest_file}", "red", file=sys.stderr)
+        return 2
+    except (OSError, SyntaxError, ValueError, RuntimeError) as error:
+        cprint(f"Cannot read manifest: {error}", "red", file=sys.stderr)
+        return 2
+    if not manifest["repositories"]:
+        cprint("No repositories listed in manifest", "red", file=sys.stderr)
+        return 2
+
+    result = 0
+    for repository in sorted(manifest["repositories"], key=lambda item: item["path"].lower()):
+        try:
+            status, code = diff_repository(workspace, manifest, repository, preferred_remotes)
+        except (OSError, git.exc.GitError) as error:
+            status, code = f"Cannot compare ({error})", 2
+        cprint(f"{repository['path']}: {status}", ("green", "yellow", "red")[code])
+        result = max(result, code)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Deploy or update a Git workspace from a manifest.",
+        description="Deploy, update, or compare a Git workspace using a manifest.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("manifest", nargs="?", help="manifest file")
@@ -1127,6 +1278,11 @@ def main():
         "--upgrade",
         action="store_true",
         help="upgrade only the manifest schema after confirmation, without scanning or deploying",
+    )
+    mode.add_argument(
+        "--diff",
+        action="store_true",
+        help="compare manifest commits with local HEADs without fetching or writing",
     )
     parser.add_argument(
         "--listed",
@@ -1143,7 +1299,7 @@ def main():
         "-H",
         "--here",
         action="store_true",
-        help="deploy directly into the workspace instead of creating the manifest's named project directory",
+        help="deploy directly into the workspace; scan and diff already use the workspace as the project root",
     )
     parser.add_argument(
         "--commit",
@@ -1165,6 +1321,8 @@ def main():
     args = parser.parse_args()
     if args.upgrade and (args.listed or args.remote or args.here or args.commit or args.sync_remotes or args.checkout):
         parser.error("--upgrade cannot be combined with scan or deploy options")
+    if args.diff and (args.listed or args.commit or args.sync_remotes or args.checkout):
+        parser.error("--diff cannot be combined with --listed, --commit, --sync-remotes, or --checkout")
 
     if args.debug:
         input("Wait for debugging and press Enter to continue...")
@@ -1178,6 +1336,8 @@ def main():
             return upgrade_manifest_file(manifest)
         if args.scan:
             return update_manifest(workspace, manifest, args.remote, args.listed, args.sync_remotes)
+        if args.diff:
+            return diff_manifest(workspace, manifest, args.remote)
         if not os.path.exists(manifest):
             cprint(f"Manifest file not found: {manifest}", "red", file=sys.stderr)
             return 1

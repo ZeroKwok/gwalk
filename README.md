@@ -75,6 +75,18 @@ gwalk -rf all
 gwalk -rf all -a run gl
 ```
 
+### gdeploy - 用清单管理 Git 工作区
+
+```bash
+# 对比当前项目的 gdeploy.manifest 与本地仓库，不抓取、不写入
+gdeploy --diff
+
+# 指定项目根目录，并以清单中的 github 远端优先判断未推送提交
+gdeploy --diff -d PROJECT --remote github
+```
+
+检查结果显示提交匹配、领先或分叉，以及未提交修改和相对于本地远端缓存的未推送提交。详见 [`gdeploy` 规则](doc/PR-gdeploy.md#read-only-comparison)。
+
 ### gapply - 补丁应用工具
 
 应用补丁并创建提交(dry-run 模式):
