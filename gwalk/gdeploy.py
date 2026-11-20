@@ -949,9 +949,34 @@ def clone_mode_repository(mode, remotes, target, remote_name):
     raise last_error
 
 
-def update_bare_like_repository(repo, target, remote_name):
+def update_existing_repository(
+    repo, target, remote_name, remotes, sync_remotes, display_path, *, skip_local_ahead, commit,
+):
+    """Fetch an existing repository unless the snapshot policy says to skip it."""
+    original_head = snapshot = None
+    if skip_local_ahead:
+        with local_git_environment(repo):
+            original_head = resolve_snapshot_commit(repo, "HEAD")
+            if not original_head:
+                raise RuntimeError("Cannot determine whether local HEAD is ahead: local HEAD has no commit")
+            snapshot = resolve_manifest_snapshot(repo, commit)
+            if snapshot and report_local_ahead(repo, snapshot, original_head, display_path):
+                return remote_name, True
+
+    remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
     cprint(f"Update {target}", "green")
     fetch_repository(repo, remote_name)
+
+    if skip_local_ahead and not snapshot:
+        # A fetch can supply missing objects and can move HEAD itself in an archive.
+        # Classify the HEAD that existed before the update, not one created by the fetch.
+        with local_git_environment(repo):
+            snapshot = resolve_manifest_snapshot(repo, commit)
+            if not snapshot:
+                raise RuntimeError(f"Manifest commit not found: {commit}")
+            if report_local_ahead(repo, snapshot, original_head, display_path):
+                return remote_name, True
+    return remote_name, False
 
 
 def ensure_checkout_target(repository, branch, commit, checkout_to_commit):
@@ -970,6 +995,7 @@ def deploy_manifest(
     checkout_to_commit=False,
     checkout_archive=False,
     sync_remotes=False,
+    skip_local_ahead=False,
 ):
     try:
         manifest = upgrade_manifest(load_manifest(manifest_file), os.path.basename(os.path.dirname(os.path.abspath(manifest_file))))
@@ -979,6 +1005,7 @@ def deploy_manifest(
     workspace = os.path.normpath(os.path.abspath(workspace))
     if not here:
         workspace = os.path.join(workspace, manifest["name"])
+    protect_snapshot = checkout_to_commit and skip_local_ahead
     summary = {
         "cloned": 0,
         "updated": 0,
@@ -1030,12 +1057,14 @@ def deploy_manifest(
                     else:
                         raise RuntimeError(f"Expected a {mode} repository: {target}")
 
-                    remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
-                    if repo.bare:
-                        update_bare_like_repository(repo, target, remote_name)
-                    else:
-                        cprint(f"Update {target}", "green")
-                        fetch_repository(repo, remote_name)
+                    remote_name, skipped = update_existing_repository(
+                        repo, target, remote_name, remotes, sync_remotes, display_path,
+                        skip_local_ahead=protect_snapshot and mode == "archive" and (checkout_archive or not repo.bare),
+                        commit=commit,
+                    )
+                    if skipped:
+                        summary["skipped"] += 1
+                        continue
                 else:
                     if not remotes:
                         raise RuntimeError(f"No remote for missing repository: {path}")
@@ -1077,10 +1106,14 @@ def deploy_manifest(
                 if not gwalk.RepoWalk.isRepoRoot(target):
                     raise RuntimeError(f"Expected a Git repository: {target}")
 
-                cprint(f"Update {target}", "green")
                 repo = git.Repo(target)
-                remote_name = ensure_manifest_remote(repo, remote_name, remotes, sync_remotes, display_path)
-                fetch_repository(repo, remote_name)
+                remote_name, skipped = update_existing_repository(
+                    repo, target, remote_name, remotes, sync_remotes, display_path,
+                    skip_local_ahead=protect_snapshot, commit=commit,
+                )
+                if skipped:
+                    summary["skipped"] += 1
+                    continue
             else:
                 if not remotes:
                     raise RuntimeError(f"No remote for missing repository: {path}")
@@ -1130,14 +1163,30 @@ def count_exclusive_commits(repo, left, right):
     return left_count, right_count
 
 
-def snapshot_difference(repo, commit, head):
-    if not head:
-        raise RuntimeError("local HEAD has no commit")
+def resolve_manifest_snapshot(repo, commit):
     if commit is None or commit == "":
         raise RuntimeError("manifest commit is missing")
     if not isinstance(commit, str):
         raise RuntimeError("manifest commit must be a string")
-    snapshot = resolve_snapshot_commit(repo, commit)
+    return resolve_snapshot_commit(repo, commit)
+
+
+def format_commit_count(count):
+    return f"{count} {'commit' if count == 1 else 'commits'}"
+
+
+def report_local_ahead(repo, snapshot, head, display_path):
+    manifest_only, local_only = count_exclusive_commits(repo, snapshot, head)
+    if manifest_only or not local_only:
+        return False
+    cprint(f"Skip {display_path}: local HEAD is ahead of the manifest by {format_commit_count(local_only)}", "yellow")
+    return True
+
+
+def snapshot_difference(repo, commit, head):
+    if not head:
+        raise RuntimeError("local HEAD has no commit")
+    snapshot = resolve_manifest_snapshot(repo, commit)
     if not snapshot:
         raise RuntimeError(f"manifest commit not found locally: {commit}")
 
@@ -1146,7 +1195,7 @@ def snapshot_difference(repo, commit, head):
         return f"Diverged (manifest only: {manifest_only}, local only: {local_only})", 1
     if manifest_only or local_only:
         side, count = ("Manifest", manifest_only) if manifest_only else ("Local", local_only)
-        return f"{side} ahead ({count} {'commit' if count == 1 else 'commits'})", 1
+        return f"{side} ahead ({format_commit_count(count)})", 1
     return "Match", 0
 
 
@@ -1187,6 +1236,11 @@ def unpushed_commits(repo, head, remote_value, preferred_remotes):
     return local_only, tracking
 
 
+def local_git_environment(repo):
+    # Avoid refreshing the index on disk and block lazy fetches, including on older Git.
+    return repo.git.custom_environment(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="")
+
+
 def diff_repository(workspace, manifest, repository, preferred_remotes):
     path = repository["path"]
     target = os.path.join(workspace, *path.split("/"))
@@ -1202,8 +1256,7 @@ def diff_repository(workspace, manifest, repository, preferred_remotes):
             return "Cannot compare (not a Git repository root)", 2
 
     details = []
-    # Avoid refreshing the index on disk and block lazy fetches, including on older Git.
-    with repo.git.custom_environment(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL=""):
+    with local_git_environment(repo):
         head = resolve_snapshot_commit(repo, "HEAD")
         try:
             commit = replace_variables(repository.get("commit"), manifest, repository, workspace)
@@ -1307,6 +1360,11 @@ def main():
         help="checkout manifest commits, attaching to manifest branches when safe",
     )
     parser.add_argument(
+        "--skip-local-ahead",
+        action="store_true",
+        help="with --commit, skip existing repositories whose HEAD is ahead of the manifest commit",
+    )
+    parser.add_argument(
         "--sync-remotes",
         action="store_true",
         help="approve remote synchronization without prompting (scan: local to manifest; deploy: manifest to local)",
@@ -1319,6 +1377,8 @@ def main():
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+    if args.skip_local_ahead and (not args.commit or args.scan or args.upgrade or args.diff):
+        parser.error("--skip-local-ahead requires --commit in deploy mode")
     if args.upgrade and (args.listed or args.remote or args.here or args.commit or args.sync_remotes or args.checkout):
         parser.error("--upgrade cannot be combined with scan or deploy options")
     if args.diff and (args.listed or args.commit or args.sync_remotes or args.checkout):
@@ -1343,7 +1403,7 @@ def main():
             return 1
         return deploy_manifest(
             workspace, manifest, args.remote, args.here, args.commit,
-            args.checkout, args.sync_remotes,
+            args.checkout, args.sync_remotes, skip_local_ahead=args.skip_local_ahead,
         )
     except KeyboardInterrupt:
         cprint("\nInterrupted", "red", file=sys.stderr)

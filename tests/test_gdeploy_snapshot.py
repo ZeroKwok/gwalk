@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
+import sys
 
 import git
 import pytest
 
-from gwalk import gdeploy
+from gwalk import garchive, gdeploy
 
 
 @pytest.fixture
@@ -276,3 +278,164 @@ def test_archive_snapshot_attaches_after_restore(tmp_path):
     assert gdeploy.deploy_manifest(str(tmp_path), str(manifest), checkout_to_commit=True, checkout_archive=True) == 0
     assert git.Repo(tmp_path / "backup").active_branch.name == "main"
     assert gdeploy.load_manifest(str(manifest))["repositories"][0]["mode"] == "archive"
+
+
+def write_snapshot_manifest(tmp_path, source, commit, **entry):
+    manifest = tmp_path / "gdeploy.manifest"
+    manifest.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "demo",
+        "repositories": [{"path": ".", "remote": {"origin": source.working_dir},
+                          "branch": "main", "commit": commit, "post": "post", **entry}],
+    }), encoding="utf-8")
+    return manifest
+
+
+@pytest.mark.parametrize("state,count", [("published", 1), ("unpushed", 2), ("detached", 2)])
+def test_skip_local_ahead_is_read_only_even_with_dirty_tree(snapshot, tmp_path, monkeypatch, capsys, state, count):
+    source, repo, first = snapshot
+    if state == "detached":
+        repo.git.switch("--detach")
+    if state != "published":
+        repo.index.commit("additional local commit")
+    previous = repo.head.commit.hexsha
+    original_remote = repo.git.config("--get", "remote.origin.url")
+    dirty = Path(repo.working_dir) / "README.md"
+    dirty.write_text("keep my edits", encoding="utf-8")
+    manifest = write_snapshot_manifest(
+        tmp_path, source, first, remote={"origin": "https://example.invalid/replacement.git"},
+    )
+    for name in ("ensure_manifest_remote", "fetch_repository", "checkout_commit", "update_submodules", "run_post_commands"):
+        monkeypatch.setattr(gdeploy, name, lambda *args: pytest.fail("skipped repository was processed"))
+    monkeypatch.setattr(sys, "argv", [
+        "gdeploy", "--commit", "--skip-local-ahead", "--sync-remotes", "-H", "-d", repo.working_dir, str(manifest),
+    ])
+
+    assert gdeploy.main() == 0
+    assert repo.head.commit.hexsha == previous
+    assert repo.head.is_detached == (state == "detached")
+    assert repo.git.config("--get", "remote.origin.url") == original_remote
+    assert dirty.read_text(encoding="utf-8") == "keep my edits"
+    output = capsys.readouterr().out
+    assert f"Skip .: local HEAD is ahead of the manifest by {count} commit" in output
+    assert "0 updated, 0 post failed, 1 skipped, 0 failed" in output
+
+
+@pytest.mark.parametrize("state", ["match", "behind", "diverged", "different branch", "needs fetch"])
+def test_skip_local_ahead_keeps_normal_checkout_for_other_relationships(snapshot, tmp_path, monkeypatch, capsys, state):
+    source, repo, first = snapshot
+    target = source.head.commit.hexsha
+    if state == "behind":
+        repo.git.switch("--detach", first)
+    elif state == "diverged":
+        repo.git.switch("-c", "feature", first)
+        repo.index.commit("different history")
+    elif state == "different branch":
+        target = first
+        repo.git.switch("-c", "feature", first)
+        assert repo.heads.main.commit.hexsha != first
+    elif state == "needs fetch":
+        target = source.index.commit("only on the remote").hexsha
+        assert not gdeploy.commit_available(repo, target)
+    manifest = write_snapshot_manifest(tmp_path, source, target)
+    events = []
+    monkeypatch.setattr(gdeploy, "update_submodules", lambda current: events.append(current.head.commit.hexsha))
+    monkeypatch.setattr(gdeploy, "run_post_commands", lambda commands, directory: commands == "post")
+
+    assert gdeploy.deploy_manifest(repo.working_dir, manifest, here=True,
+                                   checkout_to_commit=True, skip_local_ahead=True) == 0
+    assert repo.active_branch.name == "main"
+    assert repo.head.commit.hexsha == target
+    assert events == [target]
+    assert "1 updated, 0 post failed, 0 skipped, 0 failed" in capsys.readouterr().out
+
+
+def test_skip_local_ahead_continues_and_pins_fresh_clones(snapshot, tmp_path, monkeypatch, capsys):
+    source, repo, first = snapshot
+    previous = repo.head.commit.hexsha
+    entries = [{"path": path, "remote": {"origin": source.working_dir}, "branch": "main", "commit": first}
+               for path in ("target", "fresh")]
+    manifest = tmp_path / "gdeploy.manifest"
+    manifest.write_text(gdeploy.render_manifest({
+        "schema_version": 1, "name": "demo", "repositories": entries,
+    }), encoding="utf-8")
+    events = []
+    monkeypatch.setattr(gdeploy, "update_submodules", lambda current: events.append(current.head.commit.hexsha))
+
+    assert gdeploy.deploy_manifest(tmp_path, manifest, here=True, checkout_to_commit=True, skip_local_ahead=True) == 0
+    assert repo.head.commit.hexsha == previous
+    assert git.Repo(tmp_path / "fresh").head.commit.hexsha == first
+    assert events == [first]
+    assert "1 cloned, 0 updated, 0 post failed, 1 skipped, 0 failed" in capsys.readouterr().out
+
+
+def test_skip_local_ahead_fails_closed_in_shallow_repository(snapshot, tmp_path, monkeypatch, capsys):
+    source, _, first = snapshot
+    repo = git.Repo.clone_from(Path(source.working_dir).as_uri(), tmp_path / "shallow", depth=2)
+    previous = repo.head.commit.hexsha
+    assert gdeploy.commit_available(repo, first)
+    manifest = write_snapshot_manifest(tmp_path, source, first)
+    monkeypatch.setattr(gdeploy, "fetch_repository", lambda *args: pytest.fail("unexpected fetch"))
+
+    assert gdeploy.deploy_manifest(repo.working_dir, manifest, here=True,
+                                   checkout_to_commit=True, skip_local_ahead=True) == 1
+    assert repo.head.commit.hexsha == previous
+    assert "shallow history cannot reliably compare different commits" in capsys.readouterr().err
+
+
+def test_skip_local_ahead_fails_if_snapshot_is_unavailable_after_fetch(snapshot, tmp_path, capsys):
+    source, repo, _ = snapshot
+    previous = repo.head.commit.hexsha
+    new_remote_tip = source.index.commit("new remote commit").hexsha
+    manifest = write_snapshot_manifest(tmp_path, source, "0" * 40)
+
+    assert gdeploy.deploy_manifest(repo.working_dir, manifest, here=True,
+                                   checkout_to_commit=True, skip_local_ahead=True) == 1
+    assert repo.git.rev_parse("refs/remotes/origin/main") == new_remote_tip
+    assert repo.head.commit.hexsha == previous
+    assert "Manifest commit not found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_skip_local_ahead_protects_archive_snapshots(snapshot, tmp_path, monkeypatch, capsys, restored):
+    source, repo, first = snapshot
+    directory = Path(repo.working_dir)
+    if not restored:
+        directory = tmp_path / "archive"
+        garchive.clone(source.working_dir, directory)
+    manifest = write_snapshot_manifest(tmp_path, source, first, mode="archive")
+    for module, name in ((gdeploy, "fetch_repository"), (garchive, "restore")):
+        monkeypatch.setattr(module, name, lambda *args: pytest.fail("skipped archive was processed"))
+
+    assert gdeploy.deploy_manifest(directory, manifest, here=True, checkout_to_commit=True,
+                                   checkout_archive=not restored, skip_local_ahead=True) == 0
+    current = git.Repo(directory)
+    assert current.bare == (not restored)
+    assert current.head.commit.hexsha == source.head.commit.hexsha
+    assert "Skip .: local HEAD is ahead" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("layout", ["bare", "mirror", "archive"])
+def test_skip_local_ahead_does_not_skip_fetch_only_repositories(snapshot, tmp_path, monkeypatch, capsys, layout):
+    source, _, first = snapshot
+    directory = tmp_path / layout
+    if layout == "archive":
+        garchive.clone(source.working_dir, directory)
+    else:
+        git.Repo.clone_from(source.working_dir, directory, **{layout: True})
+    manifest = write_snapshot_manifest(tmp_path, source, first, mode=layout)
+    fetched = []
+    monkeypatch.setattr(gdeploy, "fetch_repository", lambda current, remote: fetched.append(remote))
+
+    assert gdeploy.deploy_manifest(directory, manifest, here=True, checkout_to_commit=True, skip_local_ahead=True) == 0
+    assert fetched == ["origin"]
+    assert git.Repo(directory).bare
+    assert "1 updated, 0 post failed, 0 skipped, 0 failed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("other_options", [[], ["--scan", "--commit"], ["--upgrade"], ["--diff"]])
+def test_skip_local_ahead_requires_commit_in_deploy_mode(monkeypatch, capsys, other_options):
+    monkeypatch.setattr(sys, "argv", ["gdeploy", "--skip-local-ahead", *other_options])
+    with pytest.raises(SystemExit) as error:
+        gdeploy.main()
+    assert error.value.code == 2
+    assert "--skip-local-ahead requires --commit in deploy mode" in capsys.readouterr().err

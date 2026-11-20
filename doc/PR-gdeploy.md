@@ -31,6 +31,7 @@ gdeploy --scan --sync-remotes [-d WORKSPACE] [MANIFEST]
 gdeploy -H [-d WORKSPACE] [MANIFEST]
 gdeploy --here [-d WORKSPACE] [MANIFEST]
 gdeploy --commit [-d WORKSPACE] [MANIFEST]
+gdeploy --commit --skip-local-ahead [-d WORKSPACE] [MANIFEST]
 gdeploy --sync-remotes [-d WORKSPACE] [MANIFEST]
 gdeploy --checkout [-d WORKSPACE] [MANIFEST]
 ```
@@ -357,9 +358,16 @@ Commit checkout:
 - If the manifest has no branch, the selected remote branch is unavailable or does not contain the commit, or the local target branch has unpushed/divergent commits, deploy prints a yellow explanation and runs `git switch --detach <commit>`, preserving the local branch and its configuration.
 - Before leaving a different detached HEAD, deploy checks whether it is reachable from any local branch, remote-tracking branch, or tag. If not, checkout fails and asks the user to save a branch first. Reflog entries alone do not count as saved references. Keeping the same detached commit is allowed.
 - Git handles switch-level restrictions, such as a branch being checked out in another worktree. A failed switch fails deployment; it does not trigger a forced checkout or a detached retry. No `pull`, `reset --hard`, push, or automatic backup branch is used by the snapshot checkout policy.
-- The final HEAD always equals the manifest commit on success. Attached snapshots may be behind the remote; another `--commit` deployment keeps that snapshot, while normal branch deployment may fast-forward it. Submodules and `post` run only after checkout succeeds.
-- Archive repositories apply the commit only when `--checkout` is also specified; bare and mirror repositories remain bare.
+- After a successful snapshot checkout, HEAD equals the manifest commit. Attached snapshots may be behind the remote; another `--commit` deployment keeps that snapshot, while normal branch deployment may fast-forward it. Submodules and `post` run only after checkout succeeds.
+- Restoring a bare archive to a worktree requires `--checkout`. An archive that is already a worktree can apply the commit without `--checkout`. Bare and mirror repositories remain bare.
 - Archive snapshot restore performs commit, operation, and detached-HEAD safety checks before conversion, materializes the commit without moving a branch, fetches with the restored configuration, and then applies the same attachment policy as normal worktrees. Its manifest `mode` is unchanged.
+
+Skip local-ahead repositories:
+
+- `--skip-local-ahead` requires `--commit` in deploy mode. It skips an existing repository only when its current `HEAD` is a strict descendant of the manifest commit, matching `Local ahead` in `--diff`. It works for attached or detached HEAD, regardless of whether the commits were pushed. It does not protect another local branch merely because that branch is ahead.
+- When the comparison can be made locally, the skip happens before remote synchronization or fetching. If the manifest commit is absent locally, the normal remote fetch can obtain it; the comparison then uses the HEAD recorded before fetching. A skipped repository does not run checkout, submodule update, or `post` and counts as `skipped`, not as a failure. The output shows the repository path and how many commits it is ahead.
+- A match, manifest-ahead or diverged history, or a newly cloned repository follows normal snapshot checkout with all existing safety checks. If a required comparison cannot be determined (for example, due to shallow history), the repository fails rather than falling back to strict checkout.
+- The policy applies only to repositories that would perform snapshot checkout, including archives being restored. Fetch-only repositories are unaffected. Submodule entries remain managed by their parent; the policy does not protect a submodule independently when its parent deploys.
 
 By default, the manifest `name` determines the project subdirectory:
 
